@@ -8,13 +8,12 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage
 from pathlib import Path
-from dotenv import load_dotenv, dotenv_values
+from dotenv import load_dotenv
 
 from agent_engine import run_agentic_query
 
 
 # Local modules
-from agent_factory import make_agent
 from insight_engine import (
     explain,
     get_basic_info,
@@ -29,11 +28,11 @@ from insight_engine import (
 load_dotenv(Path(__file__).with_name(".env"))
 
 # === Power BI Dashboard secrets ===
-TENANT_ID = os.getenv("TENANT_ID")
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-WORKSPACE_ID = os.getenv("WORKSPACE_ID")
-REPORT_ID = os.getenv("REPORT_ID")
+CLIENT_ID = "d4513e50-29a7-4f57-a41f-68fae5006b67"
+WORKSPACE_ID = "41675240-7b6e-4163-a0ed-52b5c3b13e01"
+REPORT_ID = "06bdda3d-459c-4632-8784-d43e6b208aab"
+CLIENT_SECRET = "uF08Q~1sS-bSDi4bZe8JuOyPrIZglZ4zRqgKLbMp"
+TENANT_ID = "27fa816c-95b5-4431-90d9-4d0ac1986f71"
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173"]}})
@@ -58,6 +57,7 @@ def get_embed_token():
     Returns { embedUrl, reportId, accessToken } for embedding.
     Includes robust error handling so the frontend sees useful details.
     """
+    print(TENANT_ID, CLIENT_ID)
     try:
         # 1) AAD access token
         if not all([TENANT_ID, CLIENT_ID, CLIENT_SECRET]):
@@ -108,6 +108,7 @@ def get_embed_token():
 # ---------- Debug / Data helpers ----------
 @app.get("/debug/coverage")
 def debug_coverage():
+    print(TENANT_ID, CLIENT_ID)
     try:
         import pandas as pd
 
@@ -258,57 +259,57 @@ def data_info():
     except Exception as e:
         return jsonify({"error": "data-info failed", "details": str(e)}), 500
 
-@app.get("/agent-selftest")
-def agent_selftest():
-    try:
-        agent = make_agent()
-        return jsonify({"executor_class": agent.__class__.__name__, "ok": True})
-    except Exception as e:
-        import traceback
-        return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()}), 500
+# @app.get("/agent-selftest")
+# def agent_selftest():
+#     try:
+#         agent = make_agent()
+#         return jsonify({"executor_class": agent.__class__.__name__, "ok": True})
+#     except Exception as e:
+#         import traceback
+#         return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()}), 500
     
 # ---------- Single agent endpoint ----------
-@app.post("/agent-ask")
-def agent_ask():
-    try:
-        body = request.get_json(silent=True) or {}
-        q = (body.get("question") or "").strip()
-        history = body.get("history", [])
-        if not q:
-            return jsonify({"answer_type":"error","message":"Missing 'question'","payload":{}}), 400
+# @app.post("/agent-ask")
+# def agent_ask():
+#     try:
+#         body = request.get_json(silent=True) or {}
+#         q = (body.get("question") or "").strip()
+#         history = body.get("history", [])
+#         if not q:
+#             return jsonify({"answer_type":"error","message":"Missing 'question'","payload":{}}), 400
 
-        agent = make_agent()
+#         agent = make_agent()
 
-        # Convert simple history into LC messages
-        history_msgs = []
-        for t in history:
-            role = (t.get("role") or "").lower()
-            content = t.get("content") or ""
-            if role == "human":
-                history_msgs.append(HumanMessage(content=content))
-            elif role in ("ai","assistant"):
-                history_msgs.append(AIMessage(content=content))
+#         # Convert simple history into LC messages
+#         history_msgs = []
+#         for t in history:
+#             role = (t.get("role") or "").lower()
+#             content = t.get("content") or ""
+#             if role == "human":
+#                 history_msgs.append(HumanMessage(content=content))
+#             elif role in ("ai","assistant"):
+#                 history_msgs.append(AIMessage(content=content))
 
-        # Call the simple executor
-        result = agent.invoke({"input": q, "chat_history": history_msgs})
-        content = result if isinstance(result, str) else result.get("output", "")
+#         # Call the simple executor
+#         result = agent.invoke({"input": q, "chat_history": history_msgs})
+#         content = result if isinstance(result, str) else result.get("output", "")
 
-        try:
-            envelope = json.loads(content)
-        except Exception:
-            envelope = {"answer_type":"text","message":str(content),"payload":{},"tool_calls":[]}
+#         try:
+#             envelope = json.loads(content)
+#         except Exception:
+#             envelope = {"answer_type":"text","message":str(content),"payload":{},"tool_calls":[]}
 
-        for key in ("answer_type","message","payload"):
-            envelope.setdefault(key, "" if key!="payload" else {})
-        return jsonify(envelope), 200
+#         for key in ("answer_type","message","payload"):
+#             envelope.setdefault(key, "" if key!="payload" else {})
+#         return jsonify(envelope), 200
 
-    except Exception as e:
-        import traceback
-        return jsonify({
-        "answer_type": "error",
-        "message": "agent failed",
-        "payload": {"details": str(e), "trace": traceback.format_exc()}
-    }), 500
+#     except Exception as e:
+#         import traceback
+#         return jsonify({
+#         "answer_type": "error",
+#         "message": "agent failed",
+#         "payload": {"details": str(e), "trace": traceback.format_exc()}
+#     }), 500
 
 @app.post("/ask")
 def ask_unified():

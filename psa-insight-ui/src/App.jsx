@@ -1,139 +1,37 @@
-// App.jsx
 import React, { useState } from "react";
-import { Input, Button, Card, Typography, Space, message, Divider } from "antd";
+import Split from "react-split";
+import { Input, Button, Card, Typography, Space } from "antd";
+import { Scrollbar } from "react-scrollbars-custom";
 import PowerBIReport from "./PowerBIReport";
 
 const { TextArea } = Input;
-const { Title, Text } = Typography;
-
-const API_BASE = "http://127.0.0.1:8000"; // Flask backend
+const { Text } = Typography;
 
 export default function App() {
-  const [question, setQuestion] = useState("");
+  const [query, setQuery] = useState("");
+  const [response, setResponse] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // whole agent envelope: { answer_type, message, payload, ... }
-  const [resp, setResp] = useState(null);
-
-  // Power BI config if agent chooses to show a report
-  const [pbiConfig, setPbiConfig] = useState(null);
-
-  async function submit() {
-    if (!question.trim()) return;
+  const askLLM = async () => {
+    if (!query.trim()) return;
     setLoading(true);
-    setResp(null);
+    setResponse("");
 
     try {
-      const res = await fetch(`${API_BASE}/ask`, {
+      const res = await fetch("http://127.0.0.1:8000/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question,
-          history: [], // optional; wire chat history later if you want
-        }),
+        body: JSON.stringify({ query }),
       });
-
-      const text = await res.text();
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
-
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { answer_type: "text", message: text, payload: {} };
-      }
-
-      setResp(data);
-
-      if (data.answer_type === "powerbi" && data.payload) {
-        setPbiConfig({
-          embedUrl: data.payload.embedUrl,
-          reportId: data.payload.reportId,
-          accessToken: data.payload.accessToken,
-        });
-      }
+      const data = await res.json();
+      setResponse(data.response || data.error || "No response received.");
     } catch (err) {
+      setResponse("❌ Error connecting to backend.");
       console.error(err);
-      message.error(err.message || "Request failed");
-      setResp({
-        answer_type: "error",
-        message: String(err.message || err),
-        payload: {},
-      });
     } finally {
       setLoading(false);
     }
-  }
-
-  function renderPayload() {
-    if (!resp) return null;
-    const { answer_type, payload } = resp;
-
-    // Simple table renderer if payload has columns/rows
-    if (
-      answer_type === "table" &&
-      payload &&
-      Array.isArray(payload.columns) &&
-      Array.isArray(payload.rows)
-    ) {
-      return (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                {payload.columns.map((c) => (
-                  <th
-                    key={c}
-                    style={{
-                      textAlign: "left",
-                      borderBottom: "1px solid #ddd",
-                      padding: "6px",
-                    }}
-                  >
-                    {c}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {payload.rows.map((r, i) => (
-                <tr key={i}>
-                  {r.map((cell, j) => (
-                    <td
-                      key={j}
-                      style={{
-                        borderBottom: "1px solid #f0f0f0",
-                        padding: "6px",
-                      }}
-                    >
-                      {String(cell)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-    }
-
-    // Fallback: pretty JSON
-    return (
-      <pre
-        style={{
-          background: "#fafafa",
-          padding: "12px",
-          borderRadius: 6,
-          marginTop: 8,
-          maxHeight: 300,
-          overflow: "auto",
-          fontSize: 12,
-        }}
-      >
-        {JSON.stringify(payload ?? {}, null, 2)}
-      </pre>
-    );
-  }
+  };
 
   return (
     <div
@@ -142,113 +40,194 @@ export default function App() {
         flexDirection: "column",
         height: "100vh",
         width: "100vw",
-        background: "linear-gradient(180deg, #f0f2f5 0%, #eaf1f8 100%)",
+        backgroundColor: "#f0f2f5",
+        boxSizing: "border-box",
       }}
     >
-      {/* Header */}
-      <div
+      {/* 🔹 HEADER */}
+      <header
         style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "1rem",
           padding: "1rem 2rem",
-          textAlign: "center",
-          backgroundColor: "#fff",
+          backgroundColor: "#ffffff",
           boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+          flexShrink: 0,
+          borderBottomLeftRadius: "8px",
+          borderBottomRightRadius: "8px",
         }}
       >
-        <Title level={2} style={{ marginBottom: "0.5rem" }}>
-          PSA PortSense Dashboard
-        </Title>
-        <Text type="secondary">
-          Ask anything — the Copilot will choose the right tool automatically.
-        </Text>
-      </div>
+        <div style={{ textAlign: "center" }}>
+          <h2 style={{ margin: 0, color: "black" }}>PSA PortSense Dashboard</h2>
+          <span style={{ color: "#666" }}>
+            Monitor port performance and get instant insights from your Copilot.
+          </span>
+        </div>
+      </header>
 
-      {/* Main */}
-      <div
+      {/* MAIN CONTENT (draggable) */}
+      <main
         style={{
           flex: 1,
-          display: "flex",
-          padding: "1rem",
-          gap: "1rem",
+          overflow: "hidden",
           minHeight: 0,
+          display: "flex",
         }}
       >
-        {/* Left: Power BI */}
-        <div style={{ flex: 3, height: "100%" }}>
-          {/* Pass config only if we have it */}
-          <PowerBIReport config={pbiConfig} />
-        </div>
-
-        {/* Right: Copilot */}
-        <div
+        <Split
+          sizes={[70, 30]} // default split
+          minSize={300}
+          gutterSize={8}
+          cursor="col-resize"
           style={{
-            flex: 1,
             display: "flex",
-            flexDirection: "column",
+            flex: 1,
             height: "100%",
+            minHeight: 0,
           }}
         >
-          <Card
-            title="Insight Copilot"
+          {/* Left: Dashboard */}
+          <div style={{ padding: "1rem", overflow: "hidden" }}>
+            <div
+              style={{
+                height: "100%",
+                background: "#fff",
+                borderRadius: "8px",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                overflow: "hidden",
+              }}
+            >
+              <PowerBIReport />
+            </div>
+          </div>
+
+          {/* Right: Chat Copilot */}
+          <div
             style={{
-              flex: 1,
-              width: "100%",
-              maxWidth: 420,
-              margin: "0 auto",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-              borderRadius: "8px",
+              height: "100%", // fills Split pane height
               display: "flex",
-              flexDirection: "column",
+              justifyContent: "center", // center card horizontally
+              alignItems: "center", // center card vertically (optional)
+              padding: "1rem", // space around card
+              boxSizing: "border-box",
             }}
           >
-            <Space direction="vertical" style={{ width: "100%", flex: 1 }}>
-              <TextArea
-                rows={3}
-                placeholder="e.g., Explain APAC performance and actions • or • Show WoW trend for ArrivalAccuracy(FinalBTR) in APAC"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-              />
-
-              <div style={{ display: "flex", gap: 8 }}>
-                <Button type="primary" loading={loading} onClick={submit}>
-                  Ask
-                </Button>
-                <Button onClick={() => setQuestion("")} disabled={loading}>
-                  Clear
-                </Button>
+            {/* Card container */}
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                width: "100%",
+                maxWidth: "500px", // max width of card
+                height: "100%", // full height of parent minus padding
+                backgroundColor: "#fff",
+                borderRadius: "7px",
+                boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
+                overflow: "hidden", // ensure inner rows stay contained
+              }}
+            >
+              {/* Header */}
+              <div
+                style={{
+                  flexShrink: 0,
+                  padding: "0.75rem 1rem",
+                  borderBottom: "1px solid #e0e0e0",
+                  fontWeight: "bold",
+                  color: "black",
+                  backgroundColor: "#fafafa",
+                }}
+              >
+                Insight Copilot
               </div>
 
-              {resp && (
-                <>
-                  <Divider style={{ margin: "8px 0" }} />
-                  <div
-                    style={{
-                      background: "#fafafa",
-                      padding: "12px",
-                      borderRadius: "6px",
-                      textAlign: "left",
-                      wordBreak: "break-word",
-                      overflowY: "auto",
-                      whiteSpace: "pre-wrap",
-                      fontSize: 13,
-                      maxHeight: 360,
-                    }}
-                  >
-                    <div style={{ marginBottom: 6 }}>
-                      <Text strong>Type:</Text>{" "}
-                      <code>{resp.answer_type || "text"}</code>
-                    </div>
-                    <div style={{ marginBottom: 8 }}>
-                      <Text strong>Message:</Text>{" "}
-                      {resp.message || "(no message)"}
-                    </div>
-                    {renderPayload()}
+              {/* Response area */}
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: "auto",
+                  padding: "1rem",
+                  fontSize: "14px",
+                  wordBreak: "break-word",
+                  color: "black",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {response ? (
+                  <div>{response}</div>
+                ) : (
+                  <div style={{ color: "#8b8b8bff" }}>
+                    Ask about statistics, insights...
                   </div>
-                </>
-              )}
-            </Space>
-          </Card>
-        </div>
-      </div>
+                )}
+              </div>
+
+              {/* Footer: input + button */}
+              <div
+                style={{
+                  flexShrink: 0,
+                  display: "flex",
+                  gap: "0.5rem",
+                  padding: "0.5rem 1rem",
+                  borderTop: "1px solid #e0e0e0",
+                  alignItems: "flex-end",
+                }}
+              >
+                <TextArea
+                  rows={3}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Type your question..."
+                  style={{ flex: 1, resize: "none", fontSize: "14px" }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      const btn = document.getElementById("sendButton");
+                      if (!btn) return;
+
+                      btn.disabled = true; // disable immediately to simulate press
+                      askLLM(); // trigger the click
+                      setTimeout(() => {
+                        btn.disabled = false; // re-enable after 100ms
+                      }, 120);
+                    }
+                  }}
+                />
+                <Button
+                  id="sendButton"
+                  type="primary"
+                  onClick={askLLM}
+                  style={{
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  ➤
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Split>
+      </main>
+
+      {/* FOOTER */}
+      <footer
+        style={{
+          backgroundColor: "#2b2b2bff",
+          color: "#fff",
+          textAlign: "center",
+          padding: "0.5rem",
+          fontWeight: "500",
+          fontSize: "14px",
+          flexShrink: 0,
+        }}
+      >
+        CS2101 not gonna be deleted
+      </footer>
     </div>
   );
 }
