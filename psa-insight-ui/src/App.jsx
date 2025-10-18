@@ -144,12 +144,15 @@ export default function App() {
                       textAlign: "left",
                       wordBreak: "break-word",
                       overflowY: "auto",
+                      maxHeight: "40vh",          // ✅ prevents spillover
+                      minHeight: "150px",         // ✅ ensures visible box even for short text
                     }}
                   >
                     <Text strong>Response:</Text>
-                    <div>{response}</div>
+                    <div style={{ whiteSpace: "pre-wrap" }}>{response}</div>
                   </div>
                 )}
+
               </Space>
             </Card>
           </div>
