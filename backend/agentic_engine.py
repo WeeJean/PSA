@@ -23,10 +23,12 @@ tools = [list_available_columns, analyze_metric]
 
 # --- Initialize Azure OpenAI ---
 llm = AzureChatOpenAI(
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", "https://psacodesprint2025.azure-api.net"),
+    azure_endpoint="https://psacodesprint2025.azure-api.net",   # 👈 explicit
     api_key=os.getenv("AZURE_OPENAI_KEY"),
-    deployment_name=os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4.1-nano"),
-    api_version=os.getenv("AZURE_API_VERSION", "2025-01-01-preview")
+    api_version="2025-01-01-preview",
+    deployment_name=os.getenv("AZURE_DEPLOYMENT_NAME"),         # same name that worked before
+    model="gpt-4.1-nano",                                       # optional explicit model
+    azure_deployment=os.getenv("AZURE_DEPLOYMENT_NAME")         # 👈 force correct URL segment
 )
 
 # --- Define the reasoning prompt ---
@@ -46,7 +48,25 @@ def run_agentic_query(query: str):
     """Takes a user question and returns AI-generated insight."""
     try:
         result = agent.invoke({"messages": [("user", query)]})
-        return result.get("output", "No response from agent.")
+
+        # --- handle both old and new return formats ---
+        if isinstance(result, dict):
+            if "output" in result and result["output"]:
+                return result["output"]
+            elif "messages" in result:
+                # extract final text message if present
+                msgs = result["messages"]
+                if isinstance(msgs, list) and len(msgs) > 0:
+                    last = msgs[-1]
+                    if isinstance(last, tuple):
+                        # format: ('assistant', 'text')
+                        return last[1]
+                    if hasattr(last, "content"):
+                        return last.content
+            return "⚠️ Agent returned no text output."
+        else:
+            return str(result)
+
     except Exception as e:
         print("❌ Agent error:", e)
         return f"Error: {e}"
