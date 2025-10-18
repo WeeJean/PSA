@@ -35,6 +35,25 @@ h1 {
   line-height: 1.1;
 }
 
+/* Split gutter (the draggable divider) */
+.gutter {
+  background-color: #e0e0e0;
+  background-repeat: no-repeat;
+  background-position: 50%;
+  cursor: col-resize;
+  transition: background-color 0.2s;
+}
+
+.gutter:hover {
+  background-color: #005bac; /* PSA blue */
+}
+
+.gutter.gutter-horizontal {
+  width: 6px;
+  height: 100%;
+}
+
+
 button {
   border-radius: 8px;
   border: 1px solid transparent;

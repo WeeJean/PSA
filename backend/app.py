@@ -35,7 +35,19 @@ CLIENT_SECRET = "uF08Q~1sS-bSDi4bZe8JuOyPrIZglZ4zRqgKLbMp"
 TENANT_ID = "27fa816c-95b5-4431-90d9-4d0ac1986f71"
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173"]}})
+CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:5173", "http://localhost:5173"]}}, supports_credentials=True)
+# === PowerBI Dashboard ===
+TENANT_ID = os.getenv("TENANT_ID")
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+WORKSPACE_ID = os.getenv("WORKSPACE_ID")
+REPORT_ID = os.getenv("REPORT_ID")
+
+# === Azure API Configuration (used inside LangChain) ===
+AZURE_API_KEY = os.getenv("AZURE_OPENAI_KEY")
+AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://psacodesprint2025.azure-api.net")
+DEPLOYMENT_NAME = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4.1-nano")
+API_VERSION = os.getenv("AZURE_API_VERSION", "2025-01-01-preview")
 
 # ---------- Health / Misc ----------
 @app.get("/")

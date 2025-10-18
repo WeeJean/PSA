@@ -15,17 +15,17 @@ export default function PowerBIReport() {
   );
 
   useEffect(() => {
-    async function loadReport() {
-      try {
-        const res = await fetch("http://localhost:8000/get-embed-token");
-        const data = await res.json();
-        setEmbedConfig(data);
-      } catch (err) {
-        console.error("Failed to fetch embed config:", err);
+      async function loadReport() {
+        try {
+          const res = await fetch("http://127.0.0.1:5000/get-embed-token");
+          const data = await res.json();
+          setEmbedConfig(data);
+        } catch (err) {
+          console.error("Failed to fetch embed config:", err);
+        }
       }
-    }
-    loadReport();
-  }, []);
+      loadReport();
+    }, []);
 
   useEffect(() => {
     if (!embedConfig || !reportRef.current) return;
