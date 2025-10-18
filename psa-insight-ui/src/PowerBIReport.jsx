@@ -59,7 +59,7 @@ export default function PowerBIReport() {
     <div
       ref={reportRef}
       style={{
-        height: "90vh",
+        height: "100%",
         width: "100%",
         borderRadius: "10px",
         overflow: "hidden",

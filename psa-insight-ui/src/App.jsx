@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { Input, Button, Card, Typography, Space, Collapse } from "antd";
-import PowerBIReport from "./PowerBIReport"; // 👈 import it
+import Split from "react-split";
+import { Input, Button, Card, Typography, Space } from "antd";
+import PowerBIReport from "./PowerBIReport";
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -42,97 +43,120 @@ export default function App() {
         boxSizing: "border-box",
       }}
     >
-      {/* Main Content Area */}
-      <div
+      {/* 🔹 HEADER */}
+      <header
         style={{
-          flex: 1,
           display: "flex",
-          overflow: "hidden",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "1rem",
+          padding: "1rem 2rem",
+          backgroundColor: "#ffffff",
+          boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+          flexShrink: 0,
+          borderBottomLeftRadius: "8px",
+          borderBottomRightRadius: "8px",
         }}
       >
-        {/* Left: Collapsible Power BI Dashboard */}
-        <div style={{ flex: 3, padding: "1rem" }}>
-          <Collapse
-            defaultActiveKey={["1"]}
-            style={{
-              width: "100%",
-              background: "#fff",
-              borderRadius: "8px",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            }}
-            items={[
-              {
-                key: "1",
-                label: <b>📊 Power BI Dashboard</b>,
-                children: (
-                  <div
-                    style={{
-                      height: "85vh",
-                      width: "100%",
-                      borderRadius: "8px",
-                      overflow: "hidden",
-                    }}
-                  >
-                    <PowerBIReport />
-                  </div>
-                ),
-              },
-            ]}
-          />
+        <div style={{ textAlign: "center" }}>
+          <h2 style={{ margin: 0, color: "black" }}>PSA PortSense Dashboard</h2>
+          <span style={{ color: "#666" }}>
+            Monitor port performance and get instant insights from your Copilot.
+          </span>
         </div>
+      </header>
 
-        {/* Right: Chat Copilot */}
-        <div
+      {/* MAIN CONTENT (draggable) */}
+      <main
+        style={{
+          flex: 1,
+          overflow: "hidden",
+          minHeight: 0,
+          display: "flex",
+        }}
+      >
+        <Split
+          sizes={[70, 30]} // default split
+          minSize={300}
+          gutterSize={8}
+          cursor="col-resize"
           style={{
-            flex: 1,
             display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            padding: "1rem",
+            flex: 1,
+            height: "100%",
           }}
         >
-          <Card
-            title="PSA Insight Copilot"
+          {/* Left: Dashboard */}
+          <div style={{ padding: "1rem", overflow: "hidden" }}>
+            <div
+              style={{
+                height: "100%",
+                background: "#fff",
+                borderRadius: "8px",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                overflow: "hidden",
+              }}
+            >
+              <PowerBIReport />
+            </div>
+          </div>
+
+          {/* Right: Chat Copilot */}
+          <div
             style={{
-              width: "100%",
-              maxWidth: 400,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-              borderRadius: "8px",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              padding: "1rem",
+              overflow: "hidden",
             }}
           >
-            <Space direction="vertical" style={{ width: "100%" }}>
-              <TextArea
-                rows={3}
-                placeholder="Ask something about port performance..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              <Button type="primary" loading={loading} onClick={askLLM}>
-                Ask
-              </Button>
-              {response && (
-                <div
-                  style={{
-                    marginTop: "1rem",
-                    background: "#fafafa",
-                    padding: "1rem",
-                    borderRadius: "6px",
-                    textAlign: "left",
-                    wordBreak: "break-word",
-                    maxHeight: "50vh",
-                    overflowY: "auto",
-                  }}
-                >
-                  <Text strong>Response:</Text>
-                  <div>{response}</div>
-                </div>
-              )}
-            </Space>
-          </Card>
-        </div>
-      </div>
+            <Card
+              title="Insight Copilot"
+              style={{
+                width: "100%",
+                maxWidth: "100%",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                borderRadius: "8px",
+                height: "100%",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <Space direction="vertical" style={{ width: "100%", flex: 1 }}>
+                <TextArea
+                  rows={3}
+                  placeholder="Ask something about port performance..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                <Button type="primary" loading={loading} onClick={askLLM}>
+                  Ask
+                </Button>
+                {response && (
+                  <div
+                    style={{
+                      flex: 1,
+                      marginTop: "1rem",
+                      background: "#fafafa",
+                      padding: "1rem",
+                      borderRadius: "6px",
+                      textAlign: "left",
+                      wordBreak: "break-word",
+                      overflowY: "auto",
+                    }}
+                  >
+                    <Text strong>Response:</Text>
+                    <div>{response}</div>
+                  </div>
+                )}
+              </Space>
+            </Card>
+          </div>
+        </Split>
+      </main>
 
-      {/* Footer */}
+      {/* 🔹 FOOTER */}
       <footer
         style={{
           backgroundColor: "#000",
@@ -141,6 +165,7 @@ export default function App() {
           padding: "0.75rem",
           fontWeight: "500",
           fontSize: "14px",
+          flexShrink: 0,
         }}
       >
         CS2101 not gonna be deleted

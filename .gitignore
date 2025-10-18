@@ -7,3 +7,4 @@ backend/.env
 
 # Node dependencies
 psa-insight-ui/node_modules/
+/backend/__pycache__
