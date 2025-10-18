@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).with_name(".env"))
 
 # app.py (imports)
-from insight_engine import explain, get_basic_info, DATA_PATH, pd, _df, force_recoerce, ALIASES
+from insight_engine import explain, get_basic_info, DATA_PATH, pd, _df, force_recoerce, ALIASES, get_agent
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["http://localhost:5173","http://127.0.0.1:5173"]}})
@@ -175,6 +175,32 @@ def data_info():
         # return JSON instead of an HTML debugger page
         return jsonify({"error": "data-info failed", "details": str(e)}), 500
 
+@app.post("/agent-ask")
+def agent_ask():
+    try:
+        body = request.get_json(silent=True) or {}
+        q = (body.get("question") or "").strip()
+        if not q:
+            return jsonify({"error": "Missing 'question'"}), 400
+
+        agent = get_agent()
+
+        # Different LC versions accept different shapes; try both
+        try:
+            result = agent.invoke({"input": q})
+        except Exception:
+            result = agent.invoke(q)
+
+        if isinstance(result, dict) and "output" in result:
+            answer = result["output"]
+            raw = {k: v for k, v in result.items() if k != "output"}
+        else:
+            answer = result
+            raw = {}
+
+        return jsonify({"answer": answer, "raw": raw}), 200
+    except Exception as e:
+        return jsonify({"error": "agent failed", "details": str(e)}), 500
 
 if __name__ == "__main__":
     print("Starting Flask from:", __file__)

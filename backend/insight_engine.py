@@ -5,8 +5,11 @@ import os, json, re
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 from dotenv import load_dotenv
+from langchain_core.tools import tool
+from langchain_core.prompts import ChatPromptTemplate
+import json as _json
 
 # Map your BU → Region (edit as you like)
 BU_TO_REGION = {
@@ -300,7 +303,6 @@ ALIASES = {
     "date":                       ["ATB(LocalTime)"],
     "group_bu":                   ["BU"],
 }
-
 
 ALIASES["week"] = ["Week"]
 
@@ -596,6 +598,175 @@ def explain(question: str, ui_filters: Optional[Dict] = None, metric_override: O
         inputs=json.dumps(merged, default=str), q=question
     )).content
     return merged, summary
+
+def _norm_filters(filters_json: str | None):
+    if not filters_json:
+        return {}
+    try:
+        f = _json.loads(filters_json)
+        if isinstance(f, dict):
+            return f
+    except Exception:
+        pass
+    return {}
+
+@tool("kpi_snapshot", return_direct=False)
+def kpi_tool(filters_json: str = "") -> str:
+    """
+    Compute KPI snapshot for the current dataset and optional filters.
+    filters_json: JSON string of an include-filter dict, e.g. {"Region":["APAC"],"BU":["SINGAPORE"]}
+    Returns JSON string with KPI fields.
+    """
+    f = _norm_filters(filters_json)
+    return _json.dumps(kpi_snapshot(f), default=str)
+
+@tool("trend_wow", return_direct=False)
+def trend_tool(metric: str, filters_json: str = "") -> str:
+    """
+    Compute week-over-week trend for a metric within optional filters.
+    metric: exact column name (e.g., "ArrivalAccuracy(FinalBTR)" or "Berth Time(hours):ATU-ATB")
+    filters_json: JSON string filters.
+    Returns JSON string with latest_week, previous_week, current_mean, previous_mean, delta...
+    """
+    f = _norm_filters(filters_json)
+    return _json.dumps(summarize_metric(metric, f), default=str)
+
+@tool("anomalies_by_group", return_direct=False)
+def anomalies_tool(metric: str, group_col: str = "BU", filters_json: str = "", top_n: int = 3) -> str:
+    """
+    Find highest/lowest groups by z-score on a metric.
+    metric: exact column name
+    group_col: grouping column (default "BU")
+    filters_json: JSON string filters
+    top_n: how many groups to return for each side
+    Returns JSON string with highest/lowest arrays.
+    """
+    f = _norm_filters(filters_json)
+    out = anomalies_by_group(metric, group_col=group_col, top_n=int(top_n), filters=f)
+    return _json.dumps(out, default=str)
+
+@tool("distinct_values", return_direct=False)
+def distinct_tool(column: str) -> str:
+    """
+    List distinct values for a column (e.g., 'Region' or 'BU').
+    Returns JSON string with values.
+    """
+    if column not in _df.columns:
+        return _json.dumps({"error": f"Column '{column}' not found", "columns": list(_df.columns)})
+    vals = sorted({str(v) for v in _df[column].dropna().unique().tolist()})
+    return _json.dumps({"column": column, "count": len(vals), "values": vals})
+
+@tool("peek_column", return_direct=False)
+def peek_tool(column: str, n: int = 8) -> str:
+    """
+    Peek the first n values of a column to understand its content.
+    Returns JSON string with dtype and samples.
+    """
+    if column not in _df.columns:
+        return _json.dumps({"error": f"Column '{column}' not found", "columns": list(_df.columns)})
+    s = _df[column].head(int(n))
+    return _json.dumps({
+        "dtype": str(_df[column].dtype),
+        "samples": s.astype(str).tolist()
+    })
+
+def get_agent():
+    """
+    Return an agent-like object with .invoke({"input": question}) -> dict|str.
+    Order of attempts:
+    1) Newer LC: create_openai_tools_agent + AgentExecutor
+    2) Mid LC:  initialize_agent(AgentType.OPENAI_FUNCTIONS)
+    3) Fallback: simple_rules_agent (manual routing, no LC agent)
+    """
+    llm = get_llm()
+    tools = [kpi_tool, trend_tool, anomalies_tool, distinct_tool, peek_tool]
+
+    # ---- Attempt 1: Newer LC (0.2.x) ----
+    try:
+        from langchain.agents import create_openai_tools_agent, AgentExecutor
+        try:
+            from langchain import hub
+            prompt = hub.pull("hwchase17/openai-tools-agent")
+        except Exception:
+            # Build a minimal prompt if hub unavailable
+            from langchain_core.prompts import ChatPromptTemplate
+            prompt = ChatPromptTemplate.from_messages([
+                ("system",
+                 "You are a precise PSA ops analyst. Use the available tools to answer. "
+                 "Prefer KPI -> Trend -> Anomalies. Parse simple filters like 'APAC' -> {\"Region\":[\"APAC\"]} "
+                 "and 'SINGAPORE' -> {\"BU\":[\"SINGAPORE\"]}. Be concise."),
+                ("human", "{input}"),
+            ])
+        agent_runnable = create_openai_tools_agent(llm, tools, prompt)
+        return AgentExecutor(agent=agent_runnable, tools=tools, verbose=False)
+    except Exception:
+        pass
+
+    # ---- Attempt 2: Older LC (0.0.x / 0.1.x): initialize_agent ----
+    try:
+        from langchain.agents import initialize_agent, AgentType
+        return initialize_agent(
+            tools=tools, llm=llm,
+            agent=AgentType.OPENAI_FUNCTIONS,  # or TOOL_CALLING on some builds
+            verbose=False,
+            handle_parsing_errors=True,
+        )
+    except Exception:
+        pass
+
+    # ---- Attempt 3: Fallback manual "agent" (no LC agent) ----
+    class SimpleRulesAgent:
+        """Very small router so you're never blocked."""
+        def invoke(self, inp: Dict[str, Any]):
+            q = inp["input"] if isinstance(inp, dict) else str(inp)
+            text = q.strip().upper()
+
+            # naive filter inference
+            filters = {}
+            # detect 'APAC' / 'EMEA' / 'AMERICAS' / 'ME' tokens
+            for region in ["APAC", "EMEA", "AMERICAS", "ME", "MIDDLE EAST"]:
+                if region in text:
+                    filters = {"Region": [region if region != "MIDDLE EAST" else "ME"]}
+                    break
+            # detect a BU by peeking common city names (adjust as needed)
+            for bu in ["SINGAPORE", "BUSAN", "TIANJIN", "LAEMCHABANG", "JAKARTA", "MUMBAI", "ANTWERP", "PANAMACITY", "DAMMAM"]:
+                if bu in text:
+                    filters = {"BU": [bu]}
+                    break
+
+            # choose metric
+            metric = None
+            if "ASSURED" in text:
+                metric = "AssuredPortTimeAchieved(%)"
+            elif "BERTH" in text:
+                metric = "Berth Time(hours):ATU-ATB"
+            elif "ARRIVAL" in text or "ACCURACY" in text:
+                metric = "ArrivalAccuracy(FinalBTR)"
+
+            # call tools directly
+            import json as _json
+            out = {"filters": filters, "metric": metric}
+
+            out["kpi"] = kpi_snapshot(filters)
+            if metric:
+                out["trend"] = summarize_metric(metric, filters)
+                out["anom"] = anomalies_by_group(metric, filters=filters)
+            else:
+                # default to arrival accuracy if not specified
+                dm = "ArrivalAccuracy(FinalBTR)"
+                out["trend"] = summarize_metric(dm, filters)
+                out["anom"] = anomalies_by_group(dm, filters=filters)
+
+            # turn into a short answer with LLM for readability
+            llm_msg = (
+                "Summarize these analytics for a stakeholder in 6 bullets. "
+                "Focus on KPI levels, week-over-week change, and top/bottom BUs. "
+                f"\nDATA:\n{_json.dumps(out, default=str)}"
+            )
+            summary = get_llm().invoke(llm_msg).content
+            return {"output": summary, "data": out}
+
+    return SimpleRulesAgent()
 
 # ========= Optional: quick CLI self-test =========
 if __name__ == "__main__":
