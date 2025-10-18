@@ -35,10 +35,10 @@ export default function App() {
     <div
       style={{
         display: "flex",
-        flexDirection: "column", // 👈 stack rows vertically
+        flexDirection: "column", // stack rows vertically
         height: "100vh",
         width: "100vw",
-        backgroundColor: "#f0f2f5",
+        background: "linear-gradient(180deg, #f0f2f5 0%, #eaf1f8 100%)",
       }}
     >
       {/* 🔹 Row 1: Title + Content */}
@@ -51,7 +51,7 @@ export default function App() {
         }}
       >
         <Title level={2} style={{ marginBottom: "0.5rem" }}>
-          PSA PortSense Dashboard
+          PSA PortSense Dashboard 
         </Title>
         <Text type="secondary">
           Monitor port performance and get instant insights from your Copilot.
