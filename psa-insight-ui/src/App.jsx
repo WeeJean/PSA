@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import Split from "react-split";
 import { Input, Button, Card, Typography, Space } from "antd";
+import { Scrollbar } from 'react-scrollbars-custom';
 import PowerBIReport from "./PowerBIReport";
 
 const { TextArea } = Input;
@@ -84,6 +85,7 @@ export default function App() {
             display: "flex",
             flex: 1,
             height: "100%",
+            minHeight:0,
           }}
         >
           {/* Left: Dashboard */}
@@ -104,65 +106,96 @@ export default function App() {
           {/* Right: Chat Copilot */}
           <div
             style={{
+              height: "100%",            // fills Split pane height
               display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              padding: "1rem",
-              overflow: "hidden",
+              justifyContent: "center",  // center card horizontally
+              alignItems: "center",      // center card vertically (optional)
+              padding: "1rem",           // space around card
+              boxSizing: "border-box",
             }}
           >
-            <Card
-              title="Insight Copilot"
+            {/* Card container */}
+            <div
               style={{
-                width: "100%",
-                maxWidth: "100%",
-                boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-                borderRadius: "8px",
-                height: "100%",
                 display: "flex",
                 flexDirection: "column",
+                width: "100%",
+                maxWidth: "500px",        // max width of card
+                height: "100%",           // full height of parent minus padding
+                backgroundColor: "#fff",
+                borderRadius: "7px",
+                boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
+                overflow: "hidden",       // ensure inner rows stay contained
               }}
             >
-              <Space direction="vertical" style={{ width: "100%", flex: 1 }}>
+              {/* Header */}
+              <div
+                style={{
+                  flexShrink: 0,
+                  padding: "0.75rem 1rem",
+                  borderBottom: "1px solid #e0e0e0",
+                  fontWeight: "bold",
+                  color: "black",
+                  backgroundColor: "#fafafa",
+                }}
+              >
+                Insight Copilot
+              </div>
+
+              {/* Response area */}
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: "auto",
+                  padding: "1rem",
+                  fontSize:"14px",
+                  wordBreak: "break-word",
+                  color: "black",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {response ? (
+                  <div>{response}</div>
+                ) : (
+                  <div style={{ color: "#8b8b8bff" }}>Ask about statistics, insights...</div>
+                )}
+              </div>
+
+              {/* Footer: input + button */}
+              <div
+                style={{
+                  flexShrink: 0,
+                  display: "flex",
+                  gap: "0.5rem",
+                  padding: "0.5rem 1rem",
+                  borderTop: "1px solid #e0e0e0",
+                  alignItems: "flex-end"
+                }}
+              >
                 <TextArea
                   rows={3}
-                  placeholder="Ask something about port performance..."
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Type your question..."
+                  style={{ flex: 1, resize: "none", fontSize:"14px" }}
                 />
-                <Button type="primary" loading={loading} onClick={askLLM}>
-                  Ask
+                <Button type="primary" onClick={askLLM} style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  ➤
                 </Button>
-                {response && (
-                  <div
-                    style={{
-                      flex: 1,
-                      marginTop: "1rem",
-                      background: "#fafafa",
-                      padding: "1rem",
-                      borderRadius: "6px",
-                      textAlign: "left",
-                      wordBreak: "break-word",
-                      overflowY: "auto",
-                    }}
-                  >
-                    <Text strong>Response:</Text>
-                    <div>{response}</div>
-                  </div>
-                )}
-              </Space>
-            </Card>
+              </div>
+            </div>
           </div>
         </Split>
       </main>
 
-      {/* 🔹 FOOTER */}
+      {/* FOOTER */}
       <footer
         style={{
-          backgroundColor: "#000",
+          backgroundColor: "#2b2b2bff",
           color: "#fff",
           textAlign: "center",
-          padding: "0.75rem",
+          padding: "0.5rem",
           fontWeight: "500",
           fontSize: "14px",
           flexShrink: 0,
