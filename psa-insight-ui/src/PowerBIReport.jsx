@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { models, powerbi } from "powerbi-client"; // ✅ import powerbi directly
+import * as pbi from "powerbi-client";
 
 export default function PowerBIReport() {
   const reportRef = useRef(null);
   const [embedConfig, setEmbedConfig] = useState(null);
+
+  // Create a Power BI service instance once
+  const powerbiServiceRef = useRef(
+    new pbi.service.Service(
+      pbi.factories.hpmFactory,
+      pbi.factories.wpmpFactory,
+      pbi.factories.routerFactory
+    )
+  );
 
   useEffect(() => {
     async function loadReport() {
@@ -21,27 +30,29 @@ export default function PowerBIReport() {
   useEffect(() => {
     if (!embedConfig || !reportRef.current) return;
 
-    // Clear any previous embed (to prevent memory leaks)
-    powerbi.reset(reportRef.current);
+    const powerbiService = powerbiServiceRef.current;
+
+    // Safely clear any existing embed
+    powerbiService.reset(reportRef.current);
 
     const embedConfigObj = {
       type: "report",
       id: embedConfig.reportId,
       embedUrl: embedConfig.embedUrl,
       accessToken: embedConfig.accessToken,
-      tokenType: models.TokenType.Embed,
-      permissions: models.Permissions.All,
+      tokenType: pbi.models.TokenType.Embed,
+      permissions: pbi.models.Permissions.All,
       settings: {
         panes: {
           filters: { visible: false },
           pageNavigation: { visible: true },
         },
-        background: models.BackgroundType.Transparent,
+        background: pbi.models.BackgroundType.Transparent,
       },
     };
 
-    // ✅ Embed the report
-    powerbi.embed(reportRef.current, embedConfigObj);
+    // Embed the report
+    powerbiService.embed(reportRef.current, embedConfigObj);
   }, [embedConfig]);
 
   return (
