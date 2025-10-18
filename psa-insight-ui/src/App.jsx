@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Split from "react-split";
 import { Input, Button, Card, Typography, Space } from "antd";
 import { Scrollbar } from "react-scrollbars-custom";
@@ -10,14 +10,12 @@ const { Text } = Typography;
 
 export default function App() {
   const [query, setQuery] = useState("");
-  const [response, setResponse] = useState("");
+  const [response, setResponse] = useState([]);
   const [loading, setLoading] = useState(false);
-
+  const lastMessageRef = useRef(null);
   const askLLM = async () => {
-    if (!query.trim()) return;
     setLoading(true);
-    setResponse("");
-
+    setQuery("");
     try {
       const res = await fetch("http://127.0.0.1:5000/ask", {
         method: "POST",
@@ -25,7 +23,10 @@ export default function App() {
         body: JSON.stringify({ query }),
       });
       const data = await res.json();
-      setResponse(data.response || data.error || "No response received.");
+      setResponse((prev) => [
+        ...prev,
+        data.response || data.error || "No response received.",
+      ]);
     } catch (err) {
       setResponse("❌ Error connecting to backend.");
       console.error(err);
@@ -37,7 +38,6 @@ export default function App() {
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
-      setResponse("");
 
       try {
         const res = await fetch("http://127.0.0.1:5000/ask", {
@@ -48,7 +48,10 @@ export default function App() {
           }),
         });
         const data = await res.json();
-        setResponse(data.response || data.error || "No response received.");
+        setResponse([
+          ...response,
+          data.response || data.error || "No response received.",
+        ]);
       } catch (err) {
         setResponse("❌ Error connecting to backend.");
         console.error(err);
@@ -59,6 +62,21 @@ export default function App() {
 
     fetchData();
   }, []);
+
+  const dotStyle = (i) => ({
+    display: "inline-block",
+    animation: `bounce 1.4s infinite ease-in-out ${i * 0.2}s`,
+    fontSize: "20px",
+    lineHeight: "0",
+    padding: "0 4px",
+  });
+
+  useEffect(() => {
+    lastMessageRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [response]);
 
   return (
     <div
@@ -175,18 +193,59 @@ export default function App() {
                   flex: 1,
                   minHeight: 0,
                   overflowY: "auto",
+                  width: "100%",
                   padding: "1rem",
                   fontSize: "14px",
                   wordBreak: "break-word",
                   color: "black",
                   whiteSpace: "pre-wrap",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "10px",
                 }}
               >
-                {response ? (
-                  <ReactMarkdown>{response}</ReactMarkdown>
-                ) : (
-                  <div style={{ color: "#8b8b8bff" }}>
-                    Ask about statistics, insights...
+                {response.length > 0 &&
+                  response.map((msg, idx) => {
+                    const isBot = idx % 2 === 0; // even = bot
+                    const isLast = idx === response.length - 1;
+                    return (
+                      <div
+                        key={idx}
+                        ref={isLast ? lastMessageRef : null}
+                        style={{
+                          alignSelf: isBot ? "flex-start" : "flex-end", // left or right
+                          backgroundColor: isBot ? "#f0f0f0" : "#1890ff",
+                          color: isBot ? "#000" : "#fff",
+                          padding: "0.5rem 0.75rem",
+                          borderRadius: "12px",
+                          maxWidth: "80%",
+                          wordBreak: "break-word",
+                          textAlign: "left", // ensures content inside bubble is left-aligned
+                          marginBottom: "0.25rem",
+                        }}
+                      >
+                        {msg}
+                      </div>
+                    );
+                  })}
+                {loading && (
+                  <div
+                    style={{
+                      alignSelf: "flex-start", // left bubble
+                      backgroundColor: "#f0f0f0",
+                      color: "#000",
+                      padding: "0.5rem 0.75rem",
+                      borderRadius: "12px",
+                      maxWidth: "30px",
+                      display: "flex",
+                      gap: "3px",
+                      justifyContent: "center",
+                      marginBottom: "0.25rem",
+                    }}
+                  >
+                    <span style={dotStyle(0)}>•</span>
+                    <span style={dotStyle(1)}>•</span>
+                    <span style={dotStyle(2)}>•</span>
                   </div>
                 )}
               </div>
@@ -203,7 +262,7 @@ export default function App() {
                 }}
               >
                 <TextArea
-                  rows={3}
+                  rows={1}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Type your question..."
@@ -211,7 +270,10 @@ export default function App() {
                 />
                 <Button
                   type="primary"
-                  onClick={askLLM}
+                  onClick={() => {
+                    setResponse((prev) => [...prev, query]); // add user message;
+                    askLLM();
+                  }}
                   style={{
                     height: "100%",
                     display: "flex",
