@@ -1,67 +1,45 @@
 import os
-import requests
 from flask import Flask, request, jsonify
-from flask_cors import CORS   # 👈 NEW: allows frontend requests
+from flask_cors import CORS
 from dotenv import load_dotenv
+from agentic_engine import run_agentic_query
 
 # === Load environment variables from .env ===
 load_dotenv()
 
 # === Flask App Setup ===
 app = Flask(__name__)
-CORS(app)  # 👈 Enable Cross-Origin Resource Sharing (lets React call Flask)
+CORS(app)   # allow frontend (React) to access Flask backend
 
-# === Azure API Configuration ===
+# === Azure API Configuration (still used inside LangChain) ===
 AZURE_API_KEY = os.getenv("AZURE_OPENAI_KEY")
-AZURE_ENDPOINT = "https://psacodesprint2025.azure-api.net"
-DEPLOYMENT_NAME = "gpt-4.1-nano"  # your deployment name in Azure
-API_VERSION = "2025-01-01-preview"
+AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://psacodesprint2025.azure-api.net")
+DEPLOYMENT_NAME = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4.1-nano")
+API_VERSION = os.getenv("AZURE_API_VERSION", "2025-01-01-preview")
 
 # === Health check endpoint ===
 @app.route("/")
 def home():
-    return "✅ Flask backend running (PSA Code Sprint API Gateway mode)"
+    return "✅ Flask backend running with Agentic AI (LangChain + Azure)"
 
-# === Main route for LLM queries ===
+# === Main route: handle user queries ===
 @app.route("/ask", methods=["POST"])
 def ask():
-    data = request.get_json()
-    query = data.get("query", "")
-
-    # Construct the Azure API URL
-    url = f"{AZURE_ENDPOINT}/openai/deployments/{DEPLOYMENT_NAME}/chat/completions?api-version={API_VERSION}"
-
-    headers = {
-        "Content-Type": "application/json",
-        "api-key": AZURE_API_KEY
-    }
-
-    payload = {
-        "messages": [{"role": "user", "content": query}],
-        "max_tokens": 200,
-        "temperature": 0.7
-    }
-
     try:
-        # Send request to Azure OpenAI (PSA API Gateway)
-        r = requests.post(url, headers=headers, json=payload)
-        r.raise_for_status()  # raise an error for bad status codes
-        result = r.json()
+        # Get query from frontend
+        data = request.get_json()
+        query = data.get("query", "")
 
-        # Return the AI response to frontend
-        return jsonify({"response": result["choices"][0]["message"]["content"]})
+        # Send query to LangChain agent (in agentic_engine.py)
+        result = run_agentic_query(query)
 
-    except requests.exceptions.RequestException as e:
-        # Network or HTTP error
-        print("❌ Network/API Error:", e)
-        return jsonify({"error": str(e)}), 500
-
+        # Return AI response to frontend
+        return jsonify({"response": result})
     except Exception as e:
-        # Any other unexpected error
-        print("❌ Unexpected Error:", e)
+        print("❌ Backend Error:", e)
         return jsonify({"error": str(e)}), 500
 
 
-# === Run the Flask app ===
+# === Run Flask app ===
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
