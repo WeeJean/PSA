@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Split from "react-split";
 import { Input, Button, Card, Typography, Space } from "antd";
-import { Scrollbar } from 'react-scrollbars-custom';
+import { Scrollbar } from "react-scrollbars-custom";
 import PowerBIReport from "./PowerBIReport";
+import ReactMarkdown from "react-markdown";
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -32,6 +33,32 @@ export default function App() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      setResponse("");
+
+      try {
+        const res = await fetch("http://127.0.0.1:5000/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: "Give me the summary and actionable insights",
+          }),
+        });
+        const data = await res.json();
+        setResponse(data.response || data.error || "No response received.");
+      } catch (err) {
+        setResponse("❌ Error connecting to backend.");
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
 
   return (
     <div
@@ -85,7 +112,7 @@ export default function App() {
             display: "flex",
             flex: 1,
             height: "100%",
-            minHeight:0,
+            minHeight: 0,
           }}
         >
           {/* Left: Dashboard */}
@@ -106,11 +133,11 @@ export default function App() {
           {/* Right: Chat Copilot */}
           <div
             style={{
-              height: "100%",            // fills Split pane height
+              height: "100%", // fills Split pane height
               display: "flex",
-              justifyContent: "center",  // center card horizontally
-              alignItems: "center",      // center card vertically (optional)
-              padding: "1rem",           // space around card
+              justifyContent: "center", // center card horizontally
+              alignItems: "center", // center card vertically (optional)
+              padding: "1rem", // space around card
               boxSizing: "border-box",
             }}
           >
@@ -120,12 +147,12 @@ export default function App() {
                 display: "flex",
                 flexDirection: "column",
                 width: "100%",
-                maxWidth: "500px",        // max width of card
-                height: "100%",           // full height of parent minus padding
+                maxWidth: "500px", // max width of card
+                height: "100%", // full height of parent minus padding
                 backgroundColor: "#fff",
                 borderRadius: "7px",
                 boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
-                overflow: "hidden",       // ensure inner rows stay contained
+                overflow: "hidden", // ensure inner rows stay contained
               }}
             >
               {/* Header */}
@@ -149,16 +176,18 @@ export default function App() {
                   minHeight: 0,
                   overflowY: "auto",
                   padding: "1rem",
-                  fontSize:"14px",
+                  fontSize: "14px",
                   wordBreak: "break-word",
                   color: "black",
                   whiteSpace: "pre-wrap",
                 }}
               >
                 {response ? (
-                  <div>{response}</div>
+                  <ReactMarkdown>{response}</ReactMarkdown>
                 ) : (
-                  <div style={{ color: "#8b8b8bff" }}>Ask about statistics, insights...</div>
+                  <div style={{ color: "#8b8b8bff" }}>
+                    Ask about statistics, insights...
+                  </div>
                 )}
               </div>
 
@@ -170,7 +199,7 @@ export default function App() {
                   gap: "0.5rem",
                   padding: "0.5rem 1rem",
                   borderTop: "1px solid #e0e0e0",
-                  alignItems: "flex-end"
+                  alignItems: "flex-end",
                 }}
               >
                 <TextArea
@@ -178,9 +207,18 @@ export default function App() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Type your question..."
-                  style={{ flex: 1, resize: "none", fontSize:"14px" }}
+                  style={{ flex: 1, resize: "none", fontSize: "14px" }}
                 />
-                <Button type="primary" onClick={askLLM} style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Button
+                  type="primary"
+                  onClick={askLLM}
+                  style={{
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
                   ➤
                 </Button>
               </div>
