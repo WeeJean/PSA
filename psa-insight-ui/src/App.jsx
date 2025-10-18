@@ -35,66 +35,91 @@ export default function App() {
     <div
       style={{
         display: "flex",
+        flexDirection: "column",
         height: "100vh",
         width: "100vw",
         backgroundColor: "#f0f2f5",
         boxSizing: "border-box",
       }}
     >
-      {/* Left: Power BI Dashboard */}
-      <div style={{ flex: 3, padding: "1rem" }}>
-        <PowerBIReport />
-      </div>
-
-      {/* Right: Chat Copilot */}
+      {/* Main Content Area */}
       <div
         style={{
           flex: 1,
           display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          padding: "1rem",
+          overflow: "hidden",
         }}
       >
-        <Card
-          title="PSA Insight Copilot"
+        {/* Left: Power BI Dashboard */}
+        <div style={{ flex: 3, padding: "1rem" }}>
+          <PowerBIReport />
+        </div>
+
+        {/* Right: Chat Copilot */}
+        <div
           style={{
-            width: "100%",
-            maxWidth: 400,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-            borderRadius: "8px",
+            flex: 1,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            padding: "1rem",
           }}
         >
-          <Space direction="vertical" style={{ width: "100%" }}>
-            <TextArea
-              rows={3}
-              placeholder="Ask something about port performance..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <Button type="primary" loading={loading} onClick={askLLM}>
-              Ask
-            </Button>
-            {response && (
-              <div
-                style={{
-                  marginTop: "1rem",
-                  background: "#fafafa",
-                  padding: "1rem",
-                  borderRadius: "6px",
-                  textAlign: "left",
-                  wordBreak: "break-word",
-                  maxHeight: "50vh",
-                  overflowY: "auto",
-                }}
-              >
-                <Text strong>Response:</Text>
-                <div>{response}</div>
-              </div>
-            )}
-          </Space>
-        </Card>
+          <Card
+            title="PSA Insight Copilot"
+            style={{
+              width: "100%",
+              maxWidth: 400,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+              borderRadius: "8px",
+            }}
+          >
+            <Space direction="vertical" style={{ width: "100%" }}>
+              <TextArea
+                rows={3}
+                placeholder="Ask something about port performance..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              <Button type="primary" loading={loading} onClick={askLLM}>
+                Ask
+              </Button>
+              {response && (
+                <div
+                  style={{
+                    marginTop: "1rem",
+                    background: "#fafafa",
+                    padding: "1rem",
+                    borderRadius: "6px",
+                    textAlign: "left",
+                    wordBreak: "break-word",
+                    maxHeight: "50vh",
+                    overflowY: "auto",
+                  }}
+                >
+                  <Text strong>Response:</Text>
+                  <div>{response}</div>
+                </div>
+              )}
+            </Space>
+          </Card>
+        </div>
       </div>
+
+      {/* Footer */}
+      <footer
+        style={{
+          backgroundColor: "#000",
+          color: "#fff",
+          textAlign: "center",
+          padding: "0.75rem",
+          fontWeight: "500",
+          fontSize: "14px",
+        }}
+      >
+        CS2101 not gonna be deleted
+      </footer>
     </div>
   );
 }
+
