@@ -25,23 +25,17 @@ from insight_engine import (
 )
 
 # Load env from backend/.env
-load_dotenv(Path(__file__).with_name(".env"))
+load_dotenv()
 
 # === Power BI Dashboard secrets ===
-CLIENT_ID = "d4513e50-29a7-4f57-a41f-68fae5006b67"
-WORKSPACE_ID = "41675240-7b6e-4163-a0ed-52b5c3b13e01"
-REPORT_ID = "06bdda3d-459c-4632-8784-d43e6b208aab"
-CLIENT_SECRET = "uF08Q~1sS-bSDi4bZe8JuOyPrIZglZ4zRqgKLbMp"
-TENANT_ID = "27fa816c-95b5-4431-90d9-4d0ac1986f71"
+CLIENT_ID = os.getenv("CLIENT_ID")
+WORKSPACE_ID = os.getenv("WORKSPACE_ID")
+REPORT_ID = os.getenv("REPORT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+TENANT_ID = os.getenv("TENANT_ID")
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:5173", "http://localhost:5173"]}}, supports_credentials=True)
-# === PowerBI Dashboard ===
-TENANT_ID = os.getenv("TENANT_ID")
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-WORKSPACE_ID = os.getenv("WORKSPACE_ID")
-REPORT_ID = os.getenv("REPORT_ID")
 
 # === Azure API Configuration (used inside LangChain) ===
 AZURE_API_KEY = os.getenv("AZURE_OPENAI_KEY")
@@ -183,31 +177,31 @@ def debug_preview_weeks():
     except Exception as e:
         return jsonify({"error": "debug/preview-weeks failed", "details": str(e)}), 500
 
-@app.get("/llm-config")
-def llm_config():
-    try:
-        from agent_factory import _make_llm
-        llm = _make_llm()
-        return jsonify({
-            "llm_class": llm.__class__.__name__,
-            "azure_endpoint": getattr(llm, "azure_endpoint", None),
-            "azure_deployment": getattr(llm, "azure_deployment", None),
-            "model_or_name": getattr(llm, "model_name", None) or getattr(llm, "model", None),
-        }), 200
-    except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+# @app.get("/llm-config")
+# def llm_config():
+#     try:
+#         from agent_factory import _make_llm
+#         llm = _make_llm()
+#         return jsonify({
+#             "llm_class": llm.__class__.__name__,
+#             "azure_endpoint": getattr(llm, "azure_endpoint", None),
+#             "azure_deployment": getattr(llm, "azure_deployment", None),
+#             "model_or_name": getattr(llm, "model_name", None) or getattr(llm, "model", None),
+#         }), 200
+#     except Exception as e:
+#         import traceback
+#         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
-@app.get("/llm-selftest")
-def llm_selftest():
-    try:
-        from agent_factory import _make_llm
-        llm = _make_llm()
-        _ = llm.invoke([{"role": "user", "content": "ping"}])
-        return jsonify({"ok": True}), 200
-    except Exception as e:
-        import traceback
-        return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()}), 500
+# @app.get("/llm-selftest")
+# def llm_selftest():
+#     try:
+#         from agent_factory import _make_llm
+#         llm = _make_llm()
+#         _ = llm.invoke([{"role": "user", "content": "ping"}])
+#         return jsonify({"ok": True}), 200
+#     except Exception as e:
+#         import traceback
+#         return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()}), 500
 
 @app.post("/recoerce")
 def recoerce():
