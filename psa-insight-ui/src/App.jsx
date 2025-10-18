@@ -1,35 +1,71 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import React, { useState } from "react";
+import { Input, Button, Card, Typography, Space } from "antd";
 
-function App() {
-  const [count, setCount] = useState(0)
+const { TextArea } = Input;
+const { Text } = Typography;
+
+export default function App() {
+  const [query, setQuery] = useState("");
+  const [response, setResponse] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const askLLM = async () => {
+    if (!query.trim()) return;
+    setLoading(true);
+    setResponse("");
+
+    try {
+      const res = await fetch("http://127.0.0.1:5000/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
+      const data = await res.json();
+      setResponse(data.response || data.error || "No response received.");
+    } catch (err) {
+      setResponse("❌ Error connecting to backend.");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        backgroundColor: "#f0f2f5",
+      }}
+    >
+      <Card title="PSA Insight Copilot" style={{ width: 600 }}>
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <TextArea
+            rows={3}
+            placeholder="Ask something about port performance..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <Button type="primary" loading={loading} onClick={askLLM}>
+            Ask
+          </Button>
+          {response && (
+            <div
+              style={{
+                marginTop: "1rem",
+                background: "#fafafa",
+                padding: "1rem",
+                borderRadius: "6px",
+              }}
+            >
+              <Text strong>Response:</Text>
+              <div>{response}</div>
+            </div>
+          )}
+        </Space>
+      </Card>
+    </div>
+  );
 }
-
-export default App

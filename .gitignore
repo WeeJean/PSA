@@ -1,0 +1,9 @@
+# Python virtual environments
+venv/
+
+# Environment keys
+.env
+backend/.env
+
+# Node dependencies
+psa-insight-ui/node_modules/
