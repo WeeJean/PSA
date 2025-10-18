@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Input, Button, Card, Typography, Space } from "antd";
+import { Input, Button, Card, Typography, Space, Collapse } from "antd";
 import PowerBIReport from "./PowerBIReport"; // 👈 import it
 
 const { TextArea } = Input;
@@ -50,9 +50,35 @@ export default function App() {
           overflow: "hidden",
         }}
       >
-        {/* Left: Power BI Dashboard */}
+        {/* Left: Collapsible Power BI Dashboard */}
         <div style={{ flex: 3, padding: "1rem" }}>
-          <PowerBIReport />
+          <Collapse
+            defaultActiveKey={["1"]}
+            style={{
+              width: "100%",
+              background: "#fff",
+              borderRadius: "8px",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+            }}
+            items={[
+              {
+                key: "1",
+                label: <b>📊 Power BI Dashboard</b>,
+                children: (
+                  <div
+                    style={{
+                      height: "85vh",
+                      width: "100%",
+                      borderRadius: "8px",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <PowerBIReport />
+                  </div>
+                ),
+              },
+            ]}
+          />
         </div>
 
         {/* Right: Chat Copilot */}
@@ -122,4 +148,3 @@ export default function App() {
     </div>
   );
 }
-
