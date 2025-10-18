@@ -34,8 +34,7 @@ prompt = ChatPromptTemplate.from_messages([
     ("system", "You are PSA’s data analytics assistant. "
                "Use the available tools to analyze port performance data "
                "and explain insights clearly in business terms."),
-    ("user", "{input}"),
-    MessagesPlaceholder(variable_name="agent_scratchpad"),
+    MessagesPlaceholder(variable_name="messages"),
 ])
 
 # --- Create agent (LangGraph runtime) ---
@@ -46,7 +45,7 @@ agent = create_react_agent(llm, tools=tools, prompt=prompt)
 def run_agentic_query(query: str):
     """Takes a user question and returns AI-generated insight."""
     try:
-        result = agent.invoke({"input": query})
+        result = agent.invoke({"messages": [("user", query)]})
         return result.get("output", "No response from agent.")
     except Exception as e:
         print("❌ Agent error:", e)

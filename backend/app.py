@@ -1,45 +1,104 @@
 import os
+import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
-from agentic_engine import run_agentic_query
 
 # === Load environment variables from .env ===
 load_dotenv()
 
 # === Flask App Setup ===
 app = Flask(__name__)
-CORS(app)   # allow frontend (React) to access Flask backend
+CORS(app)  # Enable Cross-Origin Resource Sharing (lets React call Flask)
 
-# === Azure API Configuration (still used inside LangChain) ===
+# === PowerBI Dashboard ===
+TENANT_ID = os.getenv("TENANT_ID")
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+WORKSPACE_ID = os.getenv("WORKSPACE_ID")
+REPORT_ID = os.getenv("REPORT_ID")
+
+# === Azure API Configuration ===
 AZURE_API_KEY = os.getenv("AZURE_OPENAI_KEY")
-AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://psacodesprint2025.azure-api.net")
-DEPLOYMENT_NAME = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4.1-nano")
-API_VERSION = os.getenv("AZURE_API_VERSION", "2025-01-01-preview")
+AZURE_ENDPOINT = "https://psacodesprint2025.azure-api.net"
+DEPLOYMENT_NAME = "gpt-4.1-nano"  # your deployment name in Azure
+API_VERSION = "2025-01-01-preview"
 
 # === Health check endpoint ===
 @app.route("/")
 def home():
-    return "✅ Flask backend running with Agentic AI (LangChain + Azure)"
+    return "✅ Flask backend running (PSA Code Sprint API Gateway mode)"
 
-# === Main route: handle user queries ===
+# === Main route for LLM queries ===
 @app.route("/ask", methods=["POST"])
 def ask():
+    data = request.get_json()
+    query = data.get("query", "")
+
+    # Construct the Azure API URL
+    url = f"{AZURE_ENDPOINT}/openai/deployments/{DEPLOYMENT_NAME}/chat/completions?api-version={API_VERSION}"
+
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": AZURE_API_KEY
+    }
+
+    payload = {
+        "messages": [{"role": "user", "content": query}],
+        "max_tokens": 200,
+        "temperature": 0.7
+    }
+
     try:
-        # Get query from frontend
-        data = request.get_json()
-        query = data.get("query", "")
+        # Send request to Azure OpenAI (PSA API Gateway)
+        r = requests.post(url, headers=headers, json=payload)
+        r.raise_for_status()  # raise an error for bad status codes
+        result = r.json()
 
-        # Send query to LangChain agent (in agentic_engine.py)
-        result = run_agentic_query(query)
+        # Return the AI response to frontend
+        return jsonify({"response": result["choices"][0]["message"]["content"]})
 
-        # Return AI response to frontend
-        return jsonify({"response": result})
-    except Exception as e:
-        print("❌ Backend Error:", e)
+    except requests.exceptions.RequestException as e:
+        # Network or HTTP error
+        print("❌ Network/API Error:", e)
         return jsonify({"error": str(e)}), 500
 
+    except Exception as e:
+        # Any other unexpected error
+        print("❌ Unexpected Error:", e)
+        return jsonify({"error": str(e)}), 500
 
-# === Run Flask app ===
+@app.route("/get-embed-token")
+def get_embed_token():
+    # Step 1: Get Azure AD access token
+    url = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
+    data = {
+        "grant_type": "client_credentials",
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "scope": "https://analysis.windows.net/powerbi/api/.default",
+    }
+    token_response = requests.post(url, data=data)
+    access_token = token_response.json().get("access_token")
+
+    # Step 2: Get embed details from Power BI REST API
+    headers = {"Authorization": f"Bearer {access_token}"}
+    report_url = f"https://api.powerbi.com/v1.0/myorg/groups/{WORKSPACE_ID}/reports/{REPORT_ID}"
+    report_info = requests.get(report_url, headers=headers).json()
+    embed_url = report_info["embedUrl"]
+
+    # Step 3: Generate embed token
+    embed_token_url = f"https://api.powerbi.com/v1.0/myorg/groups/{WORKSPACE_ID}/reports/{REPORT_ID}/GenerateToken"
+    embed_token_body = {"accessLevel": "View"}
+    embed_token_response = requests.post(embed_token_url, headers=headers, json=embed_token_body)
+    embed_token = embed_token_response.json()["token"]
+
+    return jsonify({
+        "embedUrl": embed_url,
+        "reportId": REPORT_ID,
+        "accessToken": embed_token
+    })
+
+# === Run the Flask app ===
 if __name__ == "__main__":
     app.run(port=5000, debug=True)

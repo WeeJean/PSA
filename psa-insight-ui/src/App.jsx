@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Input, Button, Card, Typography, Space } from "antd";
+import PowerBIReport from "./PowerBIReport"; // 👈 import it
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -33,39 +34,67 @@ export default function App() {
   return (
     <div
       style={{
-        minHeight: "100vh",
         display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
+        height: "100vh",
+        width: "100vw",
         backgroundColor: "#f0f2f5",
+        boxSizing: "border-box",
       }}
     >
-      <Card title="PSA Insight Copilot" style={{ width: 600 }}>
-        <Space direction="vertical" style={{ width: "100%" }}>
-          <TextArea
-            rows={3}
-            placeholder="Ask something about port performance..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <Button type="primary" loading={loading} onClick={askLLM}>
-            Ask
-          </Button>
-          {response && (
-            <div
-              style={{
-                marginTop: "1rem",
-                background: "#fafafa",
-                padding: "1rem",
-                borderRadius: "6px",
-              }}
-            >
-              <Text strong>Response:</Text>
-              <div>{response}</div>
-            </div>
-          )}
-        </Space>
-      </Card>
+      {/* Left: Power BI Dashboard */}
+      <div style={{ flex: 3, padding: "1rem" }}>
+        <PowerBIReport />
+      </div>
+
+      {/* Right: Chat Copilot */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          padding: "1rem",
+        }}
+      >
+        <Card
+          title="PSA Insight Copilot"
+          style={{
+            width: "100%",
+            maxWidth: 400,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+            borderRadius: "8px",
+          }}
+        >
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <TextArea
+              rows={3}
+              placeholder="Ask something about port performance..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <Button type="primary" loading={loading} onClick={askLLM}>
+              Ask
+            </Button>
+            {response && (
+              <div
+                style={{
+                  marginTop: "1rem",
+                  background: "#fafafa",
+                  padding: "1rem",
+                  borderRadius: "6px",
+                  textAlign: "left",
+                  wordBreak: "break-word",
+                  maxHeight: "50vh",
+                  overflowY: "auto",
+                }}
+              >
+                <Text strong>Response:</Text>
+                <div>{response}</div>
+              </div>
+            )}
+          </Space>
+        </Card>
+      </div>
     </div>
   );
 }
