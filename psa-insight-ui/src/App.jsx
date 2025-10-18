@@ -179,8 +179,21 @@ export default function App() {
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Type your question..."
                   style={{ flex: 1, resize: "none", fontSize:"14px" }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      const btn = document.getElementById("sendButton");
+                      if (!btn) return;
+
+                      btn.disabled = true;          // disable immediately to simulate press
+                      askLLM();                  // trigger the click
+                      setTimeout(() => {
+                        btn.disabled = false;       // re-enable after 100ms
+                      }, 120);
+                    }
+                  }}
                 />
-                <Button type="primary" onClick={askLLM} style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Button id="sendButton" type="primary" onClick={askLLM} style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   ➤
                 </Button>
               </div>
