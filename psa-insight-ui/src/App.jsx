@@ -33,14 +33,25 @@ export default function App() {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        height: "100vh",
+        width: "100vw",
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
         backgroundColor: "#f0f2f5",
+        padding: "1rem",
+        boxSizing: "border-box",
       }}
     >
-      <Card title="PSA Insight Copilot" style={{ width: 600 }}>
+      <Card
+        title="PSA Insight Copilot"
+        style={{
+          width: "100%",
+          maxWidth: 600,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          borderRadius: "8px",
+        }}
+      >
         <Space direction="vertical" style={{ width: "100%" }}>
           <TextArea
             rows={3}
@@ -58,6 +69,8 @@ export default function App() {
                 background: "#fafafa",
                 padding: "1rem",
                 borderRadius: "6px",
+                textAlign: "left",
+                wordBreak: "break-word",
               }}
             >
               <Text strong>Response:</Text>
