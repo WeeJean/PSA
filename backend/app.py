@@ -10,8 +10,7 @@ load_dotenv()
 
 # === Flask App Setup ===
 app = Flask(__name__)
-CORS(app)  # allow frontend (React) to access Flask backend
-
+CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:5173", "http://localhost:5173"]}}, supports_credentials=True)
 # === PowerBI Dashboard ===
 TENANT_ID = os.getenv("TENANT_ID")
 CLIENT_ID = os.getenv("CLIENT_ID")
