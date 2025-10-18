@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Input, Button, Card, Typography, Space } from "antd";
-import PowerBIReport from "./PowerBIReport"; 
+import PowerBIReport from "./PowerBIReport";
 
 const { TextArea } = Input;
 const { Text, Title } = Typography;
@@ -51,7 +51,7 @@ export default function App() {
         }}
       >
         <Title level={2} style={{ marginBottom: "0.5rem" }}>
-          PSA PortSense Dashboard 
+          PSA PortSense Dashboard
         </Title>
         <Text type="secondary">
           Monitor port performance and get instant insights from your Copilot.
@@ -65,7 +65,7 @@ export default function App() {
           display: "flex",
           padding: "1rem",
           gap: "1rem",
-          minHeight:0
+          minHeight: 0,
         }}
       >
         {/* Left: Power BI Dashboard */}
