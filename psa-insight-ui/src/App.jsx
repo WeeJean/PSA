@@ -265,7 +265,7 @@ export default function App() {
         <Split
           sizes={[70, 30]} // default split
           minSize={300}
-          gutterSize={8}
+          gutterSize={5}
           cursor="col-resize"
           style={{
             display: "flex",
@@ -306,7 +306,6 @@ export default function App() {
                 display: "flex",
                 flexDirection: "column",
                 width: "100%",
-                maxWidth: "500px",
                 height: "100%",
                 backgroundColor: "#fff",
                 borderRadius: "7px",
@@ -325,7 +324,8 @@ export default function App() {
                   backgroundColor: "#fafafa",
                 }}
               >
-                Insight Copilot
+                <img src="./public/BoMen.png" width="30px"></img>
+                ‎ ‎ Ask Bo-men
               </div>
 
               {/* Response area */}
