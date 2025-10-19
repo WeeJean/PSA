@@ -7,7 +7,7 @@ from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_core.tools import tool
 
 # bring your data tools in
-from insight_engine import summarize_metric, get_basic_info, explain, _df, kpi_snapshot, _norm_filters, _json, anomalies_by_group, get_llm
+from insight_engine import PSA_STRATEGY_GUARDRAIL, summarize_metric, get_basic_info, explain, _df, kpi_snapshot, _norm_filters, _json, anomalies_by_group, get_llm
 
 load_dotenv()
 
@@ -221,6 +221,11 @@ Cover a VARIETY of intents; include at least one from each where sensible:
   • Prescriptive steps   → “Recommend next 3 actions to improve <metric> in <scope>”
 
 DO NOT repeat or paraphrase the user's current question or any items in DO_NOT_REPEAT.
+
+NETWORK STRATEGY:
+{PSA_STRATEGY_GUARDRAIL}
+Bias queries toward cross-BU/region comparisons, transshipment connectivity, schedule integrity,
+and actions that improve end-to-end network performance.
 
 CONTEXT:
 {ctx_text}

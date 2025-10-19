@@ -24,6 +24,15 @@ BU_TO_REGION = {
     "TIANJIN": "APAC",
 }
 
+PSA_STRATEGY_GUARDRAIL = (
+    "PSA’s strategy is a Globally Connected Network: optimize the whole network, "
+    "not only individual terminals. Prefer cross-hub coordination, schedule integrity, "
+    "transshipment connectivity, predictable handoffs, and resilience. Avoid actions that "
+    "merely shift congestion or cost from one BU/region to another. When proposing actions "
+    "or insights, note network-wide impacts, upstream/downstream dependencies, and data/ops "
+    "coordination needed across BUs/regions and partners."
+)
+
 def _ensure_region(df: pd.DataFrame) -> pd.DataFrame:
     if "Region" in df.columns:
         return df
@@ -555,23 +564,33 @@ PARALLEL = RunnableParallel(KPI=KPI_CHAIN, Anomalies=ANOM_CHAIN, Trend=TREND_CHA
 
 ACTION_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
-     "You are PSA's network strategist. Based on KPIs, anomalies and trend, "
-     "output 3–5 short, imperative, measurable actions with clear owners and timeframes. "
-     "Use relative timeframes (e.g., 'within 2 weeks')."),
+     "You are PSA's network strategist. "
+     "Ground all recommendations in the following principle:\n"
+     "{strategy}\n\n"
+     "Based on KPIs, anomalies and trend, output 3–5 short, imperative, measurable actions "
+     "with clear owners and timeframes. Use relative timeframes (e.g., 'within 2 weeks'). "
+     "Each action must include a brief network-level rationale (how it improves global flow, "
+     "handoffs, and schedule integrity), and name cross-BU/region counterparts where relevant."
+    ),
     ("human", "KPI JSON:\n{kpi}\n\nAnomalies JSON:\n{anom}\n\nTrend JSON:\n{trend}\n\nUser question:\n{q}")
 ])
 
 SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
-     "Senior operations analyst. Write 6–10 concise bullets: "
-     "(1) KPIs vs typical, (2) unusually good/bad, (3) likely drivers, "
-     "(4) specific next actions with owners + timeframes. Plain English."),
+     "Senior operations analyst with a network-first mindset. "
+     "Lens to apply:\n{strategy}\n\n"
+     "Write 6–10 concise bullets covering: "
+     "(1) KPIs vs typical, (2) unusually good/bad, (3) likely drivers across the network, "
+     "(4) specific next actions with owners + timeframes, (5) expected network-wide impact "
+     "and risks/tradeoffs, (6) data/ops coordination required across BUs/regions."
+    ),
     ("human", "Inputs JSON:\n{inputs}\n\nUser question:\n{q}")
 ])
 
 def _suggest_actions(par_out: dict, question: str) -> str:
     llm = get_llm()
     msg = ACTION_PROMPT.format_messages(
+        strategy=PSA_STRATEGY_GUARDRAIL,
         kpi=json.dumps(par_out.get("KPI"), default=str),
         anom=json.dumps(par_out.get("Anomalies"), default=str),
         trend=json.dumps(par_out.get("Trend"), default=str),
@@ -591,7 +610,7 @@ def explain(question: str, ui_filters: Optional[Dict] = None, metric_override: O
 
     llm = get_llm()
     summary = llm.invoke(SUMMARY_PROMPT.format_messages(
-        inputs=json.dumps(merged, default=str), q=question
+        strategy=PSA_STRATEGY_GUARDRAIL, inputs=json.dumps(merged, default=str), q=question
     )).content
     return merged, summary
 
