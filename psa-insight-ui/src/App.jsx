@@ -1,22 +1,21 @@
 import React, { useState, useEffect, useRef } from "react";
 import Split from "react-split";
-import { Input, Button, Card, Typography, Space } from "antd";
-import { Scrollbar } from "react-scrollbars-custom";
+import { Input, Button, Space } from "antd";
 import PowerBIReport from "./PowerBIReport";
 import ReactMarkdown from "react-markdown";
 
 const { TextArea } = Input;
-const { Text } = Typography;
 
 export default function App() {
   const [query, setQuery] = useState("");
-  const [response, setResponse] = useState([]); // array of strings (alternating user/bot)
   const [loading, setLoading] = useState(false);
-  const [powerBIConfig, setPowerBIConfig] = useState(null); // optional: if agent returns embed
+  const [messages, setMessages] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [overlayStyle, setOverlayStyle] = useState(null);
+
   const lastMessageRef = useRef(null);
-  const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
-  const [suggestions, setSuggestions] = useState([]); // pipeline next steps
-  const [isFullscreen, setIsFullscreen] = useState(false); // to expand the chatbox
+  const chatRef = useRef(null);
 
   const API_BASE = "http://127.0.0.1:8000";
 
@@ -25,54 +24,34 @@ export default function App() {
     if (!q) return;
 
     setLoading(true);
-
-    // Show the user's message immediately
     setMessages((prev) => [...prev, { role: "user", text: q }]);
 
     try {
       const res = await fetch(`${API_BASE}/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // IMPORTANT: backend expects { question: "<text>" }
         body: JSON.stringify({ question: q }),
       });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
-      }
       const data = await res.json();
 
-      // Normalize the 3 possible shapes
       let assistantText = "";
       let nextSuggestions = [];
-      let pbi = null;
 
       if (data?.mode === "pipeline") {
-        // {mode:"pipeline", text, details}
         assistantText = data.text ?? "";
         nextSuggestions =
           data.details?.suggestions || data.details?.next_steps || [];
-        pbi = data.details?.powerBI ?? null;
       } else if (data?.mode === "agent") {
-        // {mode:"agent", text}
         assistantText = data.text ?? "";
-        // agent mode typically has no suggestions
       } else if (data?.answer_type) {
-        // Envelope: {answer_type, message, payload}
         assistantText = data.message ?? "";
         nextSuggestions = data.payload?.suggestions ?? [];
-        pbi = data.payload?.powerBI ?? null;
       } else {
-        // Fallback: show whatever we got (useful while integrating)
         assistantText = typeof data === "string" ? data : JSON.stringify(data);
       }
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", text: assistantText },
-      ]);
+
+      setMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
       setSuggestions(nextSuggestions);
-      setPowerBIConfig(pbi);
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -80,65 +59,184 @@ export default function App() {
       ]);
     } finally {
       setLoading(false);
-      setQuery(""); // clear AFTER sending
+      setQuery("");
     }
   };
 
-  const SuggestionChips = ({ items }) => {
-    if (!items?.length) return null;
-    return (
-      <Space wrap style={{ marginTop: 8 }}>
-        {items.map((s, i) => (
-          <Button key={i} size="small" onClick={() => askLLM(s)}>
-            {s}
-          </Button>
-        ))}
-      </Space>
-    );
+  useEffect(() => {
+    lastMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [messages]);
+
+  // ----- Expand/Collapse Animation -----
+
+  const expandChat = () => {
+    if (!chatRef.current) return;
+
+    const rect = chatRef.current.getBoundingClientRect();
+
+    // start overlay exactly where the chat currently is
+    setOverlayStyle({
+      position: "fixed",
+      top: rect.top,
+      left: rect.left,
+      width: rect.width,
+      height: rect.height,
+      backgroundColor: "#fff",
+      zIndex: 9999,
+      borderRadius: "7px",
+      boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
+      overflow: "hidden",
+    });
+
+    setIsFullscreen(true);
   };
 
-  // On mount, ask a starter question (fix: use `question`, not `query`)
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch(`${API_BASE}/ask`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            question: "Give me the summary and actionable insights",
-          }),
-        });
-        const data = await res.json();
-        // Reuse the same handlers by simulating a single “bot” message:
-        if (data.mode === "pipeline") {
-          const pretty = data.details
-            ? `\n\n\`\`\`json\n${JSON.stringify(data.details, null, 2)}\n\`\`\``
-            : "";
-          setResponse((prev) => [...prev, `${data.text || ""}${pretty}`]);
-        } else if (data.mode === "agent") {
-          setResponse((prev) => [...prev, data.text || "(no text)"]);
-        } else if (data.answer_type) {
-          // simple render path for initial question
-          setResponse((prev) => [...prev, data.message || "(no text)"]);
-        } else {
-          setResponse((prev) => [
-            ...prev,
-            data.response || data.error || "No response received.",
-          ]);
-        }
-      } catch (e) {
-        setResponse((prev) => [...prev, "❌ Error connecting to backend."]);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const collapseChat = () => {
+    if (!chatRef.current) return;
 
-  useEffect(() => {
-    lastMessageRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
-  }, [messages]);
+    const rect = chatRef.current.getBoundingClientRect();
+
+    // animate back to original card position
+    setOverlayStyle((prev) => ({
+      ...prev,
+      top: rect.top,
+      left: rect.left,
+      width: rect.width,
+      height: rect.height,
+      borderRadius: "7px",
+      boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
+    }));
+
+    // remove overlay after animation
+    setTimeout(() => setIsFullscreen(false), 0); // match transition duration
+  };
+
+
+  // ----- Chat Component -----
+  const ChatContent = () => (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        width: "100%",
+        maxWidth: "100%",
+        height: "100%",
+        backgroundColor: "#fff",
+        borderRadius: "7px",
+        boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
+        overflow: "hidden",
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          flexShrink: 0,
+          padding: "0.75rem 1rem",
+          borderBottom: "1px solid #e0e0e0",
+          backgroundColor: "#fafafa",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <img src="./public/BoMen.png" width="30px" alt="Bo-men" />
+          <span style={{ fontWeight: "bold", color: "black" }}>Ask Bo-men</span>
+        </div>
+
+        <Button
+          type="text"
+          onClick={isFullscreen ? collapseChat : expandChat}
+          style={{ fontSize: "1.25rem", padding: 0, color: "#333", width: "30px" }}
+          title={isFullscreen ? "Exit fullscreen" : "Expand chat"}
+        >
+          {isFullscreen ? "✕" : "⛶"}
+        </Button>
+      </div>
+
+      {/* Response Area */}
+      <div
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "1rem",
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+          fontSize: "14px",
+          wordBreak: "break-word",
+          color: "black",
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {messages.map((m, idx) => {
+          const isBot = m.role === "assistant";
+          const isLast = idx === messages.length - 1;
+          return (
+            <div
+              key={idx}
+              ref={isLast ? lastMessageRef : null}
+              style={{
+                alignSelf: isBot ? "flex-start" : "flex-end",
+                backgroundColor: isBot ? "#f0f0f0" : "#1890ff",
+                color: isBot ? "#000" : "#fff",
+                padding: "0.5rem 0.75rem",
+                borderRadius: "12px",
+                maxWidth: "80%",
+                textAlign: "left",
+              }}
+            >
+              {isBot ? <ReactMarkdown>{m.text}</ReactMarkdown> : m.text}
+              {isBot && isLast && suggestions.length > 0 && (
+                <div style={{ marginTop: "8px" }}>
+                  <Space wrap>
+                    {suggestions.map((s, i) => (
+                      <Button key={i} size="small" onClick={() => askLLM(s)}>
+                        {s}
+                      </Button>
+                    ))}
+                  </Space>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {loading && <div>Loading...</div>}
+      </div>
+
+      {/* Footer */}
+      <div
+        style={{
+          flexShrink: 0,
+          display: "flex",
+          gap: "0.5rem",
+          padding: "0.5rem 1rem",
+          borderTop: "1px solid #e0e0e0",
+        }}
+      >
+        <TextArea
+          rows={isFullscreen? 4 : 1}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onPressEnter={(e) => {
+            if (!e.shiftKey) {
+              e.preventDefault();
+              askLLM();
+            }
+          }}
+          placeholder="Type your question..."
+          style={{ flex: 1, resize: "none", fontSize: "14px" }}
+        />
+        <Button
+          type="primary"
+          onClick={() => askLLM()}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", height:"100%", width: isFullscreen ? "60px" : "auto" }}
+        >
+          ➤
+        </Button>
+      </div>
+    </div>
+  );
 
   return (
     <div
@@ -148,10 +246,9 @@ export default function App() {
         height: "100vh",
         width: "100vw",
         backgroundColor: "#f0f2f5",
-        boxSizing: "border-box",
       }}
     >
-      {/* 🔹 HEADER */}
+      {/* HEADER */}
       <header
         style={{
           display: "flex",
@@ -159,11 +256,8 @@ export default function App() {
           justifyContent: "center",
           gap: "1rem",
           padding: "1rem 2rem",
-          backgroundColor: "#ffffff",
+          backgroundColor: "#fff",
           boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-          flexShrink: 0,
-          borderBottomLeftRadius: "8px",
-          borderBottomRightRadius: "8px",
         }}
       >
         <div style={{ textAlign: "center" }}>
@@ -174,28 +268,10 @@ export default function App() {
         </div>
       </header>
 
-      {/* MAIN CONTENT (draggable) */}
-      <main
-        style={{
-          flex: 1,
-          overflow: "hidden",
-          minHeight: 0,
-          display: "flex",
-        }}
-      >
-        <Split
-          sizes={[70, 30]} // default split
-          minSize={300}
-          gutterSize={5}
-          cursor="col-resize"
-          style={{
-            display: "flex",
-            flex: 1,
-            height: "100%",
-            minHeight: 0,
-          }}
-        >
-          {/* Left: Dashboard */}
+      {/* MAIN */}
+      <main style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        <Split sizes={[70, 30]} minSize={0} gutterSize={5} style={{ display: "flex", flex: 1 }}>
+          {/* Left */}
           <div style={{ padding: "1rem", overflow: "hidden" }}>
             <div
               style={{
@@ -210,399 +286,48 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right: Chat Copilot */}
+          {/* Right */}
           <div
             style={{
               height: "100%",
+              padding: "1rem",
               display: "flex",
               justifyContent: "center",
               alignItems: "center",
-              padding: "1rem",
-              boxSizing: "border-box",
             }}
           >
-            {/* Card container */}
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                width: "100%",
-                height: "100%",
-                backgroundColor: "#fff",
-                borderRadius: "7px",
-                boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
-                overflow: "hidden",
-              }}
-            >
-              {/* Header */}
-              <div
-                style={{
-                  flexShrink: 0,
-                  padding: "0.75rem 1rem",
-                  borderBottom: "1px solid #e0e0e0",
-                  backgroundColor: "#fafafa",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <img src="./public/BoMen.png" width="30px" alt="Bo-men" />
-                  <span style={{ fontWeight: "bold", color: "black" }}>Ask Bo-men</span>
-                </div>
-
-                <Button
-                  type="text"
-                  onClick={() => setIsFullscreen(true)}
-                  style={{
-                    fontSize: "1.25rem",
-                    padding: 0,
-                    color: "#333",
-                    width: "30px",
-                  }}
-                  title="Expand chat"
-                >
-                  ⛶
-                </Button>
-              </div>
-
-              {/* Response area */}
-              <div
-                style={{
-                  flex: 1,
-                  minHeight: 0,
-                  overflowY: "auto",
-                  width: "100%",
-                  padding: "1rem",
-                  fontSize: "14px",
-                  wordBreak: "break-word",
-                  color: "black",
-                  whiteSpace: "pre-wrap",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "10px",
-                }}
-              >
-                {messages.map((m, idx) => {
-                  const isBot = m.role === "assistant";
-                  const isLast = idx === messages.length - 1;
-                  return (
-                    <div
-                      key={idx}
-                      ref={isLast ? lastMessageRef : null}
-                      style={{
-                        alignSelf: isBot ? "flex-start" : "flex-end",
-                        backgroundColor: isBot ? "#f0f0f0" : "#1890ff",
-                        color: isBot ? "#000" : "#fff",
-                        padding: "0.5rem 0.75rem",
-                        borderRadius: "12px",
-                        maxWidth: "80%",
-                        wordBreak: "break-word",
-                        textAlign: "left",
-                        marginBottom: "0.25rem",
-                      }}
-                    >
-                      {isBot ? <ReactMarkdown>{m.text}</ReactMarkdown> : m.text}
-
-                      {/* Show suggestion chips only under the last assistant message */}
-                      {isBot && isLast && suggestions?.length > 0 && (
-                        <div style={{ marginTop: "8px" }}>
-                          <Space wrap>
-                            {suggestions.map((s, i) => (
-                              <Button
-                                key={i}
-                                size="small"
-                                onClick={() => askLLM(s)}
-                              >
-                                {s}
-                              </Button>
-                            ))}
-                          </Space>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                {loading && (
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 200 200"
-                    width="50"
-                    height="50"
-                  >
-                    <circle
-                      fill="%23130208"
-                      stroke="%23130208"
-                      stroke-width="15"
-                      r="15"
-                      cx="40"
-                      cy="65"
-                    >
-                      <animate
-                        attributeName="cy"
-                        calcMode="spline"
-                        dur="2"
-                        values="65;135;65;"
-                        keySplines=".5 0 .5 1;.5 0 .5 1"
-                        repeatCount="indefinite"
-                        begin="-.4"
-                      ></animate>
-                    </circle>
-                    <circle
-                      fill="%23130208"
-                      stroke="%23130208"
-                      stroke-width="15"
-                      r="15"
-                      cx="100"
-                      cy="65"
-                    >
-                      <animate
-                        attributeName="cy"
-                        calcMode="spline"
-                        dur="2"
-                        values="65;135;65;"
-                        keySplines=".5 0 .5 1;.5 0 .5 1"
-                        repeatCount="indefinite"
-                        begin="-.2"
-                      ></animate>
-                    </circle>
-                    <circle
-                      fill="%23130208"
-                      stroke="%23130208"
-                      stroke-width="15"
-                      r="15"
-                      cx="160"
-                      cy="65"
-                    >
-                      <animate
-                        attributeName="cy"
-                        calcMode="spline"
-                        dur="2"
-                        values="65;135;65;"
-                        keySplines=".5 0 .5 1;.5 0 .5 1"
-                        repeatCount="indefinite"
-                        begin="0"
-                      ></animate>
-                    </circle>
-                  </svg>
-                )}
-              </div>
-
-              {/* Footer: input + button */}
-              <div
-                style={{
-                  flexShrink: 0,
-                  display: "flex",
-                  gap: "0.5rem",
-                  padding: "0.5rem 1rem",
-                  borderTop: "1px solid #e0e0e0",
-                  alignItems: "flex-end",
-                }}
-              >
-                <TextArea
-                  rows={1}
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onPressEnter={(e) => {
-                    if (!e.shiftKey) {
-                      e.preventDefault();
-                      askLLM(); // handles adding the user message internally
-                    }
-                  }}
-                  placeholder="Type your question..."
-                  style={{ flex: 1, resize: "none", fontSize: "14px" }}
-                />
-                <Button
-                  type="primary"
-                  onClick={() => askLLM()} // DO NOT manually push messages here
-                  style={{
-                    height: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  ➤
-                </Button>
-              </div>
+            <div ref={chatRef} style={{ width: "100%", height: "100%" }}>
+              <ChatContent />
             </div>
           </div>
         </Split>
       </main>
-      {isFullscreen && (
+
+      {/* Footer */}
+      <footer
+        style={{ backgroundColor: "#2b2b2b", color: "#fff", textAlign: "center", padding: "0.5rem" }}
+      >
+        CS2101 not gonna be deleted
+      </footer>
+
+      {/* Fullscreen Overlay */}
+      {isFullscreen && overlayStyle && (
         <div
           style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "white",
-            zIndex: 9999,
+            ...overlayStyle,
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            borderRadius: 0,
+            boxShadow: "none",
             display: "flex",
             flexDirection: "column",
           }}
         >
-          {/* Header */}
-          <div
-            style={{
-              flexShrink: 0,
-              padding: "0.75rem 1rem",
-              borderBottom: "1px solid #e0e0e0",
-              backgroundColor: "#fafafa",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <img src="./public/BoMen.png" width="30px" alt="Bo-men" />
-              <span style={{ fontWeight: "bold", color: "black" }}>
-                Ask Bo-men
-              </span>
-            </div>
-
-            <Button
-              type="text"
-              onClick={() => setIsFullscreen(false)}
-              style={{ fontSize: "1.25rem", padding: 0, color: "#333", width: "30px"}}
-              title="Exit fullscreen"
-            >
-              ✕
-            </Button>
-          </div>
-
-          {/* Fullscreen content */}
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              padding: "1rem",
-              boxSizing: "border-box",
-            }}
-          >
-            {/* reuse the same chat UI */}
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                width: "100%",
-                maxWidth: "800px",
-                height: "100%",
-                backgroundColor: "#fff",
-                borderRadius: "7px",
-                boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
-                overflow: "hidden",
-              }}
-            >
-              {/* Copy your response area + footer here */}
-              {/* Response area */}
-              <div
-                style={{
-                  flex: 1,
-                  minHeight: 0,
-                  overflowY: "auto",
-                  width: "100%",
-                  padding: "1rem",
-                  fontSize: "14px",
-                  wordBreak: "break-word",
-                  color: "black",
-                  whiteSpace: "pre-wrap",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "10px",
-                }}
-              >
-                {messages.map((m, idx) => {
-                  const isBot = m.role === "assistant";
-                  const isLast = idx === messages.length - 1;
-                  return (
-                    <div
-                      key={idx}
-                      ref={isLast ? lastMessageRef : null}
-                      style={{
-                        alignSelf: isBot ? "flex-start" : "flex-end",
-                        backgroundColor: isBot ? "#f0f0f0" : "#1890ff",
-                        color: isBot ? "#000" : "#fff",
-                        padding: "0.5rem 0.75rem",
-                        borderRadius: "12px",
-                        maxWidth: "80%",
-                        wordBreak: "break-word",
-                        textAlign: "left",
-                        marginBottom: "0.25rem",
-                      }}
-                    >
-                      {isBot ? <ReactMarkdown>{m.text}</ReactMarkdown> : m.text}
-                      {isBot && isLast && suggestions?.length > 0 && (
-                        <div style={{ marginTop: "8px" }}>
-                          <Space wrap>
-                            {suggestions.map((s, i) => (
-                              <Button key={i} size="small" onClick={() => askLLM(s)}>
-                                {s}
-                              </Button>
-                            ))}
-                          </Space>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Footer */}
-              <div
-                style={{
-                  flexShrink: 0,
-                  display: "flex",
-                  gap: "0.5rem",
-                  padding: "0.5rem 1rem",
-                  borderTop: "1px solid #e0e0e0",
-                  alignItems: "flex-end",
-                }}
-              >
-                <TextArea
-                  rows={1}
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onPressEnter={(e) => {
-                    if (!e.shiftKey) {
-                      e.preventDefault();
-                      askLLM();
-                    }
-                  }}
-                  placeholder="Type your question..."
-                  style={{ flex: 1, resize: "none", fontSize: "14px" }}
-                />
-                <Button
-                  type="primary"
-                  onClick={() => askLLM()}
-                  style={{
-                    height: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  ➤
-                </Button>
-              </div>
-            </div>
-          </div>
+          <ChatContent />
         </div>
       )}
-      {/* FOOTER */}
-      <footer
-        style={{
-          backgroundColor: "#2b2b2bff",
-          color: "#fff",
-          textAlign: "center",
-          padding: "0.5rem",
-          fontWeight: "500",
-          fontSize: "14px",
-          flexShrink: 0,
-        }}
-      >
-        CS2101 not gonna be deleted
-      </footer>
     </div>
   );
 }
