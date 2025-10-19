@@ -134,6 +134,7 @@ prompt = ChatPromptTemplate.from_messages([
      "- kpi_snapshot/trend_wow/anomalies_by_group for specific analytics\n"
      "- data_info/distinct_values/peek_column for schema exploration.\n"
      "Be concise and explain in business terms."
+     "If the user names a site like 'Antwerp', 'Singapore', 'Busan', interpret it as BU (column 'BU'), not Region."
     ),
     # Optional chat history support
     MessagesPlaceholder(variable_name="chat_history", optional=True),

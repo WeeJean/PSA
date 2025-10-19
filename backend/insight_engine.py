@@ -173,17 +173,28 @@ def _normalize_dt_strings(s: pd.Series) -> pd.Series:
     return out
 
 def _parse_dt_series(s: pd.Series) -> pd.Series:
-    """Parse with day-first after normalization; retry a couple of explicit formats if needed."""
-    s_norm = _normalize_dt_strings(s)
-    dt = pd.to_datetime(s_norm, errors="coerce", dayfirst=True)
-    if dt.notna().mean() >= 0.5:
-        return dt
-    # try explicit patterns if parse rate is too low
-    for fmt in ("%d-%m-%y %H:%M", "%d-%m-%Y %H:%M"):
-        try_dt = pd.to_datetime(s_norm, format=fmt, errors="coerce")
-        if try_dt.notna().mean() > dt.notna().mean():
-            dt = try_dt
-    return dt
+    """Parse dates deterministically. Try explicit formats first, then fallback."""
+    if s.dtype != "O":
+        return pd.to_datetime(s, errors="coerce")  # already datelike
+
+    s_norm = (
+        s.astype(str).str.strip()
+         .str.replace("\u00a0", " ", regex=False)
+         .str.replace("/", "-", regex=False)  # unify separators
+         .str.replace(r"\s+", " ", regex=True)
+         # ensure 'dd-mm-yy HH:MM' shape if time glued to date
+         .str.replace(r"^(\d{1,2}-\d{1,2}-\d{2,4})\s*(\d{1,2}:\d{2})$", r"\1 \2", regex=True)
+    )
+
+    # Try explicit formats (common in your CSVs)
+    for fmt in ("%d-%m-%y %H:%M", "%d-%m-%Y %H:%M", "%d-%m-%y", "%d-%m-%Y"):
+        dt = pd.to_datetime(s_norm, format=fmt, errors="coerce")
+        if dt.notna().mean() >= 0.5:
+            return dt
+
+    # Last resort: generic parser (kept, but now rare)
+    return pd.to_datetime(s_norm, errors="coerce", dayfirst=True)
+
 
 def _best_datetime_column(df: pd.DataFrame) -> tuple[Optional[str], Optional[pd.Series]]:
     """Pick the candidate date column with the highest parse rate."""
@@ -199,17 +210,34 @@ def _best_datetime_column(df: pd.DataFrame) -> tuple[Optional[str], Optional[pd.
 
 def _ensure_week(df: pd.DataFrame) -> pd.DataFrame:
     """Create 'Week' (YYYY-Www) and 'WeekStart' (Monday date) from the best datetime column."""
-    if "Week" in df.columns:
+    if "Week" in df.columns and "WeekStart" in df.columns:
         return df
+
     col, dt = _best_datetime_column(df)
     if not col or dt is None:
         return df
-    iso = dt.dt.isocalendar()  # year, week, day
-    df["Week"] = (iso["year"].astype(str) + "-W" + iso["week"].astype(int).astype(str).str.zfill(2))
-    df["WeekStart"] = (dt - pd.to_timedelta(dt.dt.weekday, unit="D")).dt.normalize()
-    # keep the parsed datetimes in the chosen column (prevents accidental numeric coercion)
+
+    mask = dt.notna()
+    iso = dt.dt.isocalendar()
+
+    if "Week" not in df.columns:
+        df["Week"] = pd.Series([pd.NA] * len(df), dtype="object")
+    if "WeekStart" not in df.columns:
+        df["WeekStart"] = pd.NaT
+
+    # assign ONLY for parseable rows
+    df.loc[mask, "Week"] = (
+        iso["year"].astype("Int64").astype(str)
+        + "-W"
+        + iso["week"].astype("Int64").astype(str).str.zfill(2)
+    )[mask]
+    df.loc[mask, "WeekStart"] = (dt - pd.to_timedelta(dt.dt.weekday, unit="D")).dt.normalize()[mask]
+
+    # keep parsed datetimes in the chosen column
     df[col] = dt
     return df
+
+
 
 
 
