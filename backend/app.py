@@ -359,7 +359,7 @@ def ask_unified():
             "text": answer,
             "raw": {}
         }), 200
-
+  
     except Exception as e:
         return jsonify({"error": "ask failed", "details": str(e)}), 500
 
