@@ -10,58 +10,137 @@ const { Text } = Typography;
 
 export default function App() {
   const [query, setQuery] = useState("");
-  const [response, setResponse] = useState([]);
+  const [response, setResponse] = useState([]); // array of strings (alternating user/bot)
   const [loading, setLoading] = useState(false);
+  const [powerBIConfig, setPowerBIConfig] = useState(null); // optional: if agent returns embed
   const lastMessageRef = useRef(null);
-  const askLLM = async () => {
+  const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
+  const [suggestions, setSuggestions] = useState([]); // pipeline next steps
+
+  const API_BASE = "http://127.0.0.1:8000";
+
+  const askLLM = async (forcedQuestion) => {
+    const q = (forcedQuestion ?? query).trim();
+    if (!q) return;
+
     setLoading(true);
-    setQuery("");
+
+    // Show the user's message immediately
+    setMessages((prev) => [...prev, { role: "user", text: q }]);
+
     try {
-      const res = await fetch("http://127.0.0.1:5000/ask", {
+      const res = await fetch(`${API_BASE}/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
+        // IMPORTANT: backend expects { question: "<text>" }
+        body: JSON.stringify({ question: q }),
       });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+
       const data = await res.json();
-      setResponse((prev) => [
+
+      // Normalize the 3 possible shapes
+      let assistantText = "";
+      let nextSuggestions = [];
+      let pbi = null;
+
+      if (data?.mode === "pipeline") {
+        // {mode:"pipeline", text, details}
+        assistantText = data.text ?? "";
+        nextSuggestions =
+          data.details?.suggestions || data.details?.next_steps || [];
+        pbi = data.details?.powerBI ?? null;
+      } else if (data?.mode === "agent") {
+        // {mode:"agent", text}
+        assistantText = data.text ?? "";
+        // agent mode typically has no suggestions
+      } else if (data?.answer_type) {
+        // Envelope: {answer_type, message, payload}
+        assistantText = data.message ?? "";
+        nextSuggestions = data.payload?.suggestions ?? [];
+        pbi = data.payload?.powerBI ?? null;
+      } else {
+        // Fallback: show whatever we got (useful while integrating)
+        assistantText = typeof data === "string" ? data : JSON.stringify(data);
+      }
+
+      setMessages((prev) => [
         ...prev,
-        data.response || data.error || "No response received.",
+        { role: "assistant", text: assistantText },
       ]);
+      setSuggestions(nextSuggestions);
+      setPowerBIConfig(pbi);
     } catch (err) {
-      setResponse("❌ Error connecting to backend.");
       console.error(err);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: `⚠️ ${err.message}` },
+      ]);
     } finally {
       setLoading(false);
+      setQuery(""); // clear AFTER sending
     }
   };
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
+  const SuggestionChips = ({ items }) => {
+    if (!items?.length) return null;
+    return (
+      <Space wrap style={{ marginTop: 8 }}>
+        {items.map((s, i) => (
+          <Button key={i} size="small" onClick={() => askLLM(s)}>
+            {s}
+          </Button>
+        ))}
+      </Space>
+    );
+  };
 
+  // On mount, ask a starter question (fix: use `question`, not `query`)
+  useEffect(() => {
+    (async () => {
       try {
-        const res = await fetch("http://127.0.0.1:5000/ask", {
+        const res = await fetch(`${API_BASE}/ask`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            query: "Give me the summary and actionable insights",
+            question: "Give me the summary and actionable insights",
           }),
         });
         const data = await res.json();
-        setResponse([
-          ...response,
-          data.response || data.error || "No response received.",
-        ]);
-      } catch (err) {
-        setResponse("❌ Error connecting to backend.");
-        console.error(err);
-      } finally {
-        setLoading(false);
+        // Reuse the same handlers by simulating a single “bot” message:
+        if (data.mode === "pipeline") {
+          const pretty = data.details
+            ? `\n\n\`\`\`json\n${JSON.stringify(data.details, null, 2)}\n\`\`\``
+            : "";
+          setResponse((prev) => [...prev, `${data.text || ""}${pretty}`]);
+        } else if (data.mode === "agent") {
+          setResponse((prev) => [...prev, data.text || "(no text)"]);
+        } else if (data.answer_type) {
+          // simple render path for initial question
+          setResponse((prev) => [...prev, data.message || "(no text)"]);
+        } else {
+          setResponse((prev) => [
+            ...prev,
+            data.response || data.error || "No response received.",
+          ]);
+        }
+      } catch (e) {
+        setResponse((prev) => [...prev, "❌ Error connecting to backend."]);
       }
-    };
-
-    fetchData();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    lastMessageRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [response]);
 
   const dotStyle = (i) => ({
     display: "inline-block",
@@ -70,13 +149,6 @@ export default function App() {
     lineHeight: "0",
     padding: "0 4px",
   });
-
-  useEffect(() => {
-    lastMessageRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
-  }, [response]);
 
   return (
     <div
@@ -151,11 +223,11 @@ export default function App() {
           {/* Right: Chat Copilot */}
           <div
             style={{
-              height: "100%", // fills Split pane height
+              height: "100%",
               display: "flex",
-              justifyContent: "center", // center card horizontally
-              alignItems: "center", // center card vertically (optional)
-              padding: "1rem", // space around card
+              justifyContent: "center",
+              alignItems: "center",
+              padding: "1rem",
               boxSizing: "border-box",
             }}
           >
@@ -165,12 +237,12 @@ export default function App() {
                 display: "flex",
                 flexDirection: "column",
                 width: "100%",
-                maxWidth: "500px", // max width of card
-                height: "100%", // full height of parent minus padding
+                maxWidth: "500px",
+                height: "100%",
                 backgroundColor: "#fff",
                 borderRadius: "7px",
                 boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
-                overflow: "hidden", // ensure inner rows stay contained
+                overflow: "hidden",
               }}
             >
               {/* Header */}
@@ -204,34 +276,51 @@ export default function App() {
                   gap: "10px",
                 }}
               >
-                {response.length > 0 &&
-                  response.map((msg, idx) => {
-                    const isBot = idx % 2 === 0; // even = bot
-                    const isLast = idx === response.length - 1;
-                    return (
-                      <div
-                        key={idx}
-                        ref={isLast ? lastMessageRef : null}
-                        style={{
-                          alignSelf: isBot ? "flex-start" : "flex-end", // left or right
-                          backgroundColor: isBot ? "#f0f0f0" : "#1890ff",
-                          color: isBot ? "#000" : "#fff",
-                          padding: "0.5rem 0.75rem",
-                          borderRadius: "12px",
-                          maxWidth: "80%",
-                          wordBreak: "break-word",
-                          textAlign: "left", // ensures content inside bubble is left-aligned
-                          marginBottom: "0.25rem",
-                        }}
-                      >
-                        {msg}
-                      </div>
-                    );
-                  })}
+                {messages.map((m, idx) => {
+                  const isBot = m.role === "assistant";
+                  const isLast = idx === messages.length - 1;
+                  return (
+                    <div
+                      key={idx}
+                      ref={isLast ? lastMessageRef : null}
+                      style={{
+                        alignSelf: isBot ? "flex-start" : "flex-end",
+                        backgroundColor: isBot ? "#f0f0f0" : "#1890ff",
+                        color: isBot ? "#000" : "#fff",
+                        padding: "0.5rem 0.75rem",
+                        borderRadius: "12px",
+                        maxWidth: "80%",
+                        wordBreak: "break-word",
+                        textAlign: "left",
+                        marginBottom: "0.25rem",
+                      }}
+                    >
+                      {isBot ? <ReactMarkdown>{m.text}</ReactMarkdown> : m.text}
+
+                      {/* Show suggestion chips only under the last assistant message */}
+                      {isBot && isLast && suggestions?.length > 0 && (
+                        <div style={{ marginTop: "8px" }}>
+                          <Space wrap>
+                            {suggestions.map((s, i) => (
+                              <Button
+                                key={i}
+                                size="small"
+                                onClick={() => askLLM(s)}
+                              >
+                                {s}
+                              </Button>
+                            ))}
+                          </Space>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
                 {loading && (
                   <div
                     style={{
-                      alignSelf: "flex-start", // left bubble
+                      alignSelf: "flex-start",
                       backgroundColor: "#f0f0f0",
                       color: "#000",
                       padding: "0.5rem 0.75rem",
@@ -265,15 +354,18 @@ export default function App() {
                   rows={1}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
+                  onPressEnter={(e) => {
+                    if (!e.shiftKey) {
+                      e.preventDefault();
+                      askLLM(); // handles adding the user message internally
+                    }
+                  }}
                   placeholder="Type your question..."
                   style={{ flex: 1, resize: "none", fontSize: "14px" }}
                 />
                 <Button
                   type="primary"
-                  onClick={() => {
-                    setResponse((prev) => [...prev, query]); // add user message;
-                    askLLM();
-                  }}
+                  onClick={() => askLLM()} // DO NOT manually push messages here
                   style={{
                     height: "100%",
                     display: "flex",
