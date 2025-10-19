@@ -11,14 +11,17 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
+  const [powerBIConfig, setPowerBIConfig] = useState(null); // friend’s addition
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [overlayStyle, setOverlayStyle] = useState(null);
 
   const lastMessageRef = useRef(null);
   const chatRef = useRef(null);
+  const hasRun = useRef(false);
 
   const API_BASE = "http://127.0.0.1:8000";
 
+  // -------------------- askLLM --------------------
   const askLLM = async (forcedQuestion) => {
     const q = (forcedQuestion ?? query).trim();
     if (!q) return;
@@ -32,49 +35,95 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: q }),
       });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+
       const data = await res.json();
 
+      // ----- normalize different backend responses -----
       let assistantText = "";
       let nextSuggestions = [];
+      let pbi = null;
 
       if (data?.mode === "pipeline") {
         assistantText = data.text ?? "";
-        nextSuggestions =
-          data.details?.suggestions || data.details?.next_steps || [];
+        nextSuggestions = data.details?.suggestions || data.details?.next_steps || [];
+        pbi = data.details?.powerBI ?? null;
       } else if (data?.mode === "agent") {
         assistantText = data.text ?? "";
       } else if (data?.answer_type) {
         assistantText = data.message ?? "";
         nextSuggestions = data.payload?.suggestions ?? [];
+        pbi = data.payload?.powerBI ?? null;
       } else {
         assistantText = typeof data === "string" ? data : JSON.stringify(data);
       }
 
       setMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
       setSuggestions(nextSuggestions);
+      setPowerBIConfig(pbi);
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", text: `⚠️ ${err.message}` },
-      ]);
+      setMessages((prev) => [...prev, { role: "assistant", text: `⚠️ ${err.message}` }]);
     } finally {
       setLoading(false);
       setQuery("");
     }
   };
 
+  // -------------------- Auto starter question --------------------
+  useEffect(() => {
+    if (hasRun.current) return;
+    hasRun.current = true;
+
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/ask`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question: "Give me the summary of KPI changes and updates, as well as and actionable insights to improve KPI in terms of efficiency and environmental sustainability." }),
+        });
+        const data = await res.json();
+
+        let assistantText = "";
+        let nextSuggestions = [];
+        let pbi = null;
+
+        if (data?.mode === "pipeline") {
+          assistantText = data.text ?? "";
+          nextSuggestions = data.details?.suggestions || data.details?.next_steps || [];
+          pbi = data.details?.powerBI ?? null;
+        } else if (data?.mode === "agent") {
+          assistantText = data.text ?? "";
+        } else if (data?.answer_type) {
+          assistantText = data.message ?? "";
+          nextSuggestions = data.payload?.suggestions ?? [];
+          pbi = data.payload?.powerBI ?? null;
+        } else {
+          assistantText = typeof data === "string" ? data : JSON.stringify(data);
+        }
+
+        setMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
+        setSuggestions(nextSuggestions);
+        setPowerBIConfig(pbi);
+      } catch (err) {
+        setMessages((prev) => [...prev, { role: "assistant", text: `⚠️ ${err.message}` }]);
+      }
+    })();
+  }, []);
+
+  // -------------------- Auto scroll --------------------
   useEffect(() => {
     lastMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [messages]);
 
-  // ----- Expand/Collapse Animation -----
-
+  // -------------------- Expand/Collapse Chat --------------------
   const expandChat = () => {
     if (!chatRef.current) return;
-
     const rect = chatRef.current.getBoundingClientRect();
 
-    // start overlay exactly where the chat currently is
     setOverlayStyle({
       position: "fixed",
       top: rect.top,
@@ -86,17 +135,28 @@ export default function App() {
       borderRadius: "7px",
       boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
       overflow: "hidden",
+      transition: "all 0.3s ease-in-out",
     });
 
     setIsFullscreen(true);
+
+    requestAnimationFrame(() => {
+      setOverlayStyle((prev) => ({
+        ...prev,
+        top: 0,
+        left: 0,
+        width: window.innerWidth,
+        height: window.innerHeight,
+        borderRadius: 0,
+        boxShadow: "none",
+      }));
+    });
   };
 
   const collapseChat = () => {
     if (!chatRef.current) return;
-
     const rect = chatRef.current.getBoundingClientRect();
 
-    // animate back to original card position
     setOverlayStyle((prev) => ({
       ...prev,
       top: rect.top,
@@ -107,19 +167,16 @@ export default function App() {
       boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
     }));
 
-    // remove overlay after animation
-    setTimeout(() => setIsFullscreen(false), 0); // match transition duration
+    setTimeout(() => setIsFullscreen(false), 300);
   };
 
-
-  // ----- Chat Component -----
+  // -------------------- Chat Content --------------------
   const ChatContent = () => (
     <div
       style={{
         display: "flex",
         flexDirection: "column",
         width: "100%",
-        maxWidth: "100%",
         height: "100%",
         backgroundColor: "#fff",
         borderRadius: "7px",
@@ -143,18 +200,16 @@ export default function App() {
           <img src="./public/BoMen.png" width="30px" alt="Bo-men" />
           <span style={{ fontWeight: "bold", color: "black" }}>Ask Bo-men</span>
         </div>
-
         <Button
           type="text"
           onClick={isFullscreen ? collapseChat : expandChat}
           style={{ fontSize: "1.25rem", padding: 0, color: "#333", width: "30px" }}
-          title={isFullscreen ? "Exit fullscreen" : "Expand chat"}
         >
           {isFullscreen ? "✕" : "⛶"}
         </Button>
       </div>
 
-      {/* Response Area */}
+      {/* Messages */}
       <div
         style={{
           flex: 1,
@@ -215,7 +270,7 @@ export default function App() {
         }}
       >
         <TextArea
-          rows={isFullscreen? 4 : 1}
+          rows={isFullscreen ? 4 : 1}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onPressEnter={(e) => {
@@ -230,7 +285,13 @@ export default function App() {
         <Button
           type="primary"
           onClick={() => askLLM()}
-          style={{ display: "flex", alignItems: "center", justifyContent: "center", height:"100%", width: isFullscreen ? "60px" : "auto" }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "100%",
+            width: isFullscreen ? "60px" : "auto",
+          }}
         >
           ➤
         </Button>
@@ -239,15 +300,7 @@ export default function App() {
   );
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        width: "100vw",
-        backgroundColor: "#f0f2f5",
-      }}
-    >
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", width: "100vw", backgroundColor: "#f0f2f5" }}>
       {/* HEADER */}
       <header
         style={{
@@ -287,15 +340,7 @@ export default function App() {
           </div>
 
           {/* Right */}
-          <div
-            style={{
-              height: "100%",
-              padding: "1rem",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-          >
+          <div style={{ height: "100%", padding: "1rem", display: "flex", justifyContent: "center", alignItems: "center" }}>
             <div ref={chatRef} style={{ width: "100%", height: "100%" }}>
               <ChatContent />
             </div>
@@ -304,27 +349,13 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer
-        style={{ backgroundColor: "#2b2b2b", color: "#fff", textAlign: "center", padding: "0.5rem" }}
-      >
+      <footer style={{ backgroundColor: "#2b2b2b", color: "#fff", textAlign: "center", padding: "0.5rem" }}>
         CS2101 not gonna be deleted
       </footer>
 
       {/* Fullscreen Overlay */}
       {isFullscreen && overlayStyle && (
-        <div
-          style={{
-            ...overlayStyle,
-            top: 0,
-            left: 0,
-            width: "100vw",
-            height: "100vh",
-            borderRadius: 0,
-            boxShadow: "none",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
+        <div style={{ ...overlayStyle, display: "flex", flexDirection: "column" }}>
           <ChatContent />
         </div>
       )}
