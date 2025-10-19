@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: psa-backend
+    env: python
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: >
+      gunicorn app:app
+      --workers 2
+      --threads 8
+      --worker-class uvicorn.workers.UvicornWorker
+      --bind 0.0.0.0:$PORT
+      --timeout 120
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: TZ
+        value: Asia/Singapore
+      # set the rest in Render dashboard later:
+      - key: AZURE_OPENAI_API_KEY
+        sync: false
+      - key: AZURE_OPENAI_ENDPOINT
+        sync: false
+      - key: AZURE_OPENAI_API_VERSION
+        value: "2025-01-01-preview"
+      - key: AZURE_OPENAI_CHAT_DEPLOYMENT
+        value: "gpt-4.1-nano"
