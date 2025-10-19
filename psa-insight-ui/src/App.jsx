@@ -1,23 +1,28 @@
+<<<<<<< HEAD
 import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
+=======
+import { useState, useEffect, useRef } from "react";
+>>>>>>> e859688299f25624484da3bd65f96d815f173094
 import Split from "react-split";
 import { Input, Button, Card, Typography, Space } from "antd";
-import { Scrollbar } from "react-scrollbars-custom";
 import PowerBIReport from "./PowerBIReport";
 import ReactMarkdown from "react-markdown";
 
 const { TextArea } = Input;
-const { Text } = Typography;
 
 export default function App() {
   const [query, setQuery] = useState("");
-  const [response, setResponse] = useState([]); // array of strings (alternating user/bot)
   const [loading, setLoading] = useState(false);
   const [powerBIConfig, setPowerBIConfig] = useState(null); // optional: if agent returns embed
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
   const [suggestions, setSuggestions] = useState([]); // pipeline next steps
+<<<<<<< HEAD
   const chipRowRef = useRef(null);
   const [chipRowH, setChipRowH] = useState(40); // reserve space under textarea
+=======
+  const hasRun = useRef(false);
+>>>>>>> e859688299f25624484da3bd65f96d815f173094
 
   const API_BASE = "http://127.0.0.1:8000";
 
@@ -117,7 +122,12 @@ export default function App() {
     }
   };
 
+<<<<<<< HEAD
   const SuggestionChips = ({ items, onClick }) => {
+=======
+  console.log(messages);
+  const SuggestionChips = ({ items }) => {
+>>>>>>> e859688299f25624484da3bd65f96d815f173094
     if (!items?.length) return null;
 
     return (
@@ -171,6 +181,8 @@ export default function App() {
   // On mount, ask a starter question (fix: use `question`, not `query`)
   useEffect(() => {
     (async () => {
+      if (hasRun.current) return;
+      hasRun.current = true;
       try {
         const res = await fetch(`${API_BASE}/ask`, {
           method: "POST",
@@ -179,26 +191,45 @@ export default function App() {
             question: "Give me the summary and actionable insights",
           }),
         });
+        // Normalize the 3 possible shapes
+        let assistantText = "";
+        let nextSuggestions = [];
+        let pbi = null;
         const data = await res.json();
-        // Reuse the same handlers by simulating a single “bot” message:
-        if (data.mode === "pipeline") {
-          const pretty = data.details
-            ? `\n\n\`\`\`json\n${JSON.stringify(data.details, null, 2)}\n\`\`\``
-            : "";
-          setResponse((prev) => [...prev, `${data.text || ""}${pretty}`]);
-        } else if (data.mode === "agent") {
-          setResponse((prev) => [...prev, data.text || "(no text)"]);
-        } else if (data.answer_type) {
-          // simple render path for initial question
-          setResponse((prev) => [...prev, data.message || "(no text)"]);
+        if (data?.mode === "pipeline") {
+          // {mode:"pipeline", text, details}
+          assistantText = data.text ?? "";
+          nextSuggestions =
+            data.details?.suggestions || data.details?.next_steps || [];
+          pbi = data.details?.powerBI ?? null;
+        } else if (data?.mode === "agent") {
+          // {mode:"agent", text}
+          assistantText = data.text ?? "";
+          // agent mode typically has no suggestions
+        } else if (data?.answer_type) {
+          // Envelope: {answer_type, message, payload}
+          assistantText = data.message ?? "";
+          nextSuggestions = data.payload?.suggestions ?? [];
+          pbi = data.payload?.powerBI ?? null;
         } else {
-          setResponse((prev) => [
-            ...prev,
-            data.response || data.error || "No response received.",
-          ]);
+          // Fallback: show whatever we got (useful while integrating)
+          assistantText =
+            typeof data === "string" ? data : JSON.stringify(data);
         }
-      } catch (e) {
-        setResponse((prev) => [...prev, "❌ Error connecting to backend."]);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", text: assistantText },
+        ]);
+        setSuggestions(nextSuggestions);
+        setPowerBIConfig(pbi);
+      } catch (err) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", text: `⚠️ ${err.message}` },
+        ]);
+      } finally {
+        setLoading(false);
+        setQuery(""); // clear AFTER sending
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -246,7 +277,19 @@ export default function App() {
         }}
       >
         <div style={{ textAlign: "center" }}>
-          <h2 style={{ margin: 0, color: "black" }}>PSA PortSense Dashboard</h2>
+          <div
+            style={{ display: "flex", width: "100%", justifyContent: "center" }}
+          >
+            <img
+              src="./BoMen.png"
+              style={{ backgroundColor: "white", paddingRight: "4px" }}
+              width="30px"
+            ></img>
+            <h2 style={{ margin: 0, color: "black" }}>
+              PSA PortSense Dashboard
+            </h2>
+          </div>
+
           <span style={{ color: "#666" }}>
             Monitor port performance and get instant insights from your Copilot.
           </span>
@@ -265,7 +308,7 @@ export default function App() {
         <Split
           sizes={[70, 30]} // default split
           minSize={300}
-          gutterSize={8}
+          gutterSize={5}
           cursor="col-resize"
           style={{
             display: "flex",
@@ -306,7 +349,6 @@ export default function App() {
                 display: "flex",
                 flexDirection: "column",
                 width: "100%",
-                maxWidth: "500px",
                 height: "100%",
                 backgroundColor: "#fff",
                 borderRadius: "7px",
@@ -325,7 +367,19 @@ export default function App() {
                   backgroundColor: "#fafafa",
                 }}
               >
-                Insight Copilot
+                <img src="./public/BoMen.png" width="30px"></img>
+                ‎ ‎ Ask Bo-men
+                <div
+                  style={{
+                    width: "12px",
+                    height: "12px",
+                    borderRadius: "50%",
+                    backgroundColor: "#05b714",
+                    display: "inline-block",
+                    marginRight: "8px",
+                    marginLeft: "6px",
+                  }}
+                />
               </div>
 
               {/* Response area */}
