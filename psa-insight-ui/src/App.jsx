@@ -16,32 +16,88 @@ export default function App() {
 
   const API_BASE = "http://127.0.0.1:8000";
 
-  function extractSuggestionsFromText(s, max = 5) {
-    if (!s) return [];
-    const lines = String(s)
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-    const candidates = lines.filter(
-      (l) =>
-        /^[-*]\s+/.test(l) || // bullets
-        /^\d+\.\s+/.test(l) || // numbered
-        /^(increase|reduce|review|investigate|optimi[sz]e|monitor|coordinate|escalate|deploy|pilot|train|audit|fix|patch|tune|rebalance|re[- ]?route|communicate|benchmark|validate|improve|lower|boost|align)\b/i.test(
-          l
-        ) // imperative-ish
+  const DEFAULT_CHIPS = [
+    "Summarize KPI snapshot for APAC",
+    "Show WoW trend for ArrivalAccuracy(FinalBTR) in APAC",
+    "Find anomalies by BU for ArrivalAccuracy(FinalBTR) in APAC",
+  ];
+
+  // Helper functions for suggestion chips
+  function filterAllowedSuggestions(items, max = 6) {
+    if (!Array.isArray(items)) return [];
+
+    const verb =
+      /^(Show|Summarize|Compare|Rank|Investigate|List|Peek|Recommend)\b/i;
+    const intent = new RegExp(
+      [
+        "KPI",
+        "snapshot",
+        "WoW",
+        "trend",
+        "week",
+        "month",
+        "MoM",
+        "delta",
+        "change",
+        "rank",
+        "best",
+        "worst",
+        "top",
+        "bottom",
+        "anomal",
+        "outlier",
+        "compare",
+        " vs ",
+        "driver",
+        "drill",
+        "distinct",
+        "unique",
+        "values",
+        "list",
+        "peek",
+        "sample",
+        "column",
+        "actions",
+        "steps",
+        "improve",
+        "recommend",
+      ].join("|"),
+      "i"
     );
-    const cleaned = candidates.map((l) => l.replace(/^[-*\d.]+\s+/, "").trim());
-    const out = [],
-      seen = new Set();
-    for (const c of cleaned) {
-      const k = c.toLowerCase();
-      if (!seen.has(k) && c) {
-        seen.add(k);
-        out.push(c.slice(0, 120));
-        if (out.length >= max) break;
-      }
+
+    const out = [];
+    const seen = new Set();
+
+    for (const s of items) {
+      if (typeof s !== "string") continue;
+      const t = s.trim().replace(/\.$/, "");
+      if (!t) continue;
+      if (!verb.test(t)) continue;
+      if (!intent.test(t)) continue;
+
+      const k = t.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(t);
+      if (out.length >= max) break;
     }
     return out;
+  }
+
+  function getLastAssistantChips(msgs) {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === "assistant" && Array.isArray(msgs[i].suggestions)) {
+        return msgs[i].suggestions;
+      }
+    }
+    return [];
+  }
+
+  function getLastUserQuestion(msgs) {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === "user") return msgs[i].text || "";
+    }
+    return "";
   }
 
   const askLLM = async (forcedQuestion) => {
@@ -50,10 +106,17 @@ export default function App() {
     setMessages((prev) => [...prev, { role: "user", text: q }]);
 
     try {
+      const lastChips = getLastAssistantChips(messages);
+      const lastQ = getLastUserQuestion(messages);
+
       const res = await fetch(`${API_BASE}/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q }), // no mode, agent-only backend
+        body: JSON.stringify({
+          question: q,
+          last_question: lastQ,
+          recent_suggestions: lastChips,
+        }),
       });
 
       const raw = await res.text();
@@ -68,22 +131,24 @@ export default function App() {
         data = { text: raw };
       }
 
-      // Backend contract: { text, details?: { suggestions?, powerBI? } }
+      /// Backend contract: { text, details?: { suggestions?, powerBI? } }
       const assistantText =
         data?.text ??
-        data?.message ?? // legacy safety
+        data?.message ??
         (typeof data === "string" ? data : JSON.stringify(data));
 
-      let chips = data?.details?.suggestions ?? [];
-      if (!chips.length) {
-        // derive chips from the text if backend didn't provide any
-        chips = extractSuggestionsFromText(assistantText, 5);
-      }
+      const rawBackendChips = data?.details?.suggestions ?? [];
+      let chips = filterAllowedSuggestions(rawBackendChips, 5);
 
-      const pbi =
-        data?.details?.powerBI ??
-        data?.payload?.powerBI ?? // legacy safety
-        null;
+      // drop anything equal/super-similar to the current q
+      chips = chips.filter((c) => c.toLowerCase() !== q.toLowerCase());
+
+      // if backend gave something but we filtered all, keep first 3 raw
+      if (!chips.length && rawBackendChips.length)
+        chips = rawBackendChips.slice(0, 3);
+      if (!chips.length) chips = DEFAULT_CHIPS;
+
+      const pbi = data?.details?.powerBI ?? data?.payload?.powerBI ?? null;
 
       setMessages((prev) => [
         ...prev,
@@ -182,14 +247,19 @@ export default function App() {
         // Backend contract: { text, details?: { suggestions?, powerBI? } }
         const assistantText =
           data?.text ??
-          data?.message ?? // legacy safety
+          data?.message ??
           (typeof data === "string" ? data : JSON.stringify(data));
 
-        let chips = data?.details?.suggestions ?? [];
-        if (!chips.length) {
-          // derive chips from the text if backend didn't provide any
-          chips = extractSuggestionsFromText(assistantText, 5);
+        const rawBackendChips = data?.details?.suggestions ?? [];
+        console.debug("backend suggestions:", rawBackendChips);
+        let chips = filterAllowedSuggestions(rawBackendChips, 5);
+        if (!chips.length && rawBackendChips.length) {
+          console.warn(
+            "All backend suggestions filtered out; showing raw first 3"
+          );
+          chips = rawBackendChips.slice(0, 3); // soft fallback to what the model sent
         }
+        if (!chips.length) chips = DEFAULT_CHIPS; // final fallback
 
         const pbi =
           data?.details?.powerBI ??
