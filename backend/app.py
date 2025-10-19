@@ -18,7 +18,6 @@ from insight_engine import (
     get_basic_info,
     DATA_PATH,
     _df,
-    force_recoerce,
 )
 
 # Load env from backend/.env
@@ -173,14 +172,6 @@ def debug_preview_weeks():
         ), 200
     except Exception as e:
         return jsonify({"error": "debug/preview-weeks failed", "details": str(e)}), 500
-
-@app.post("/recoerce")
-def recoerce():
-    try:
-        return jsonify(force_recoerce()), 200
-    except Exception as e:
-        return jsonify({"error": "recoerce failed", "details": str(e)}), 500
-
 
 @app.get("/joke-test")
 def joke_test():

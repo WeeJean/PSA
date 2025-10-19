@@ -1,21 +1,75 @@
-# insight_engine.py
-from __future__ import annotations
+# insight_engine_v2.py — month-by-month, flexible column mapper
 
+from __future__ import annotations
 import os, json, re
-import pandas as pd
-import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
-from dotenv import load_dotenv
-from langchain_core.tools import tool
-from langchain_core.prompts import ChatPromptTemplate
-import json as _json
 
-# Map your BU → Region (edit as you like)
+import pandas as pd
+import numpy as np
+from dotenv import load_dotenv
+
+# ======= Flexible header normalization =======
+def _norm_header(h: str) -> str:
+    """
+    Normalize column header strings so we can match across variants like:
+      'data[Arrival Accuracy (Final BTR)]'  → 'ArrivalAccuracy(FinalBTR)'
+      'data[Bunker Saved (USD)]'            → 'BunkerSaved(USD)'
+      'data[Berth Time (hours): ATU-ATB]'   → 'BerthTime(hours):ATU-ATB'
+    Strategy:
+      - drop leading 'data[' and trailing ']'
+      - collapse whitespace
+      - remove spaces around punctuation, then special-case a few
+    """
+    if not isinstance(h, str):
+        return str(h)
+    s = h.strip()
+    # strip data[...] wrapper
+    s = re.sub(r'^\s*data\[(.+?)\]\s*$', r'\1', s, flags=re.I)
+    # collapse spaces
+    s = re.sub(r'\s+', ' ', s)
+    # normalize spaces around punctuation
+    s = s.replace(' (', '(').replace('( ', '(').replace(' )', ')')
+    s = s.replace(' :', ':').replace(': ', ':')
+    s = s.replace(' - ', '-').replace('–', '-').replace('—', '-')
+    # remove spaces
+    s = s.replace(' ', '')
+    return s
+
+# Canonical keys we use internally
+CANONICAL = {
+    "BU": ["BU"],
+    "Region": ["Region"],
+    "ArrivalAccuracy(FinalBTR)": ["ArrivalAccuracy(FinalBTR)"],
+    "AssuredPortTimeAchieved(%)": ["AssuredPortTimeAchieved(%)"],
+    "BunkerSaved(USD)": ["BunkerSaved(USD)", "BunkerSavedUSD", "BunkerSaved"],
+    "CarbonAbatement(Tonnes)": ["CarbonAbatement(Tonnes)"],
+    "BerthTime(hours):ATU-ATB": ["BerthTime(hours):ATU-ATB"],
+    # Date/time variants
+    "ATB(LocalTime)": ["ATB(LocalTime)", "ATB(Local)"],
+    "ABT(LocalTime)": ["ABT(LocalTime)"],
+    "ATU(LocalTime)": ["ATU(LocalTime)"],
+    "FinalBTR(LocalTime)": ["FinalBTR(LocalTime)"],
+    # Explicit year/month if provided
+    "Year": ["Year"],
+    "Month": ["Month"],
+}
+
+# Regex-based fallbacks for friendly names
+REGEX_FALLBACKS = {
+    "ArrivalAccuracy(FinalBTR)": re.compile(r"^ArrivalAccuracy\(FinalBTR\)|^ArrivalAccuracy|^OnTime$", re.I),
+    "AssuredPortTimeAchieved(%)": re.compile(r"AssuredPortTimeAchieved|\(%\)$", re.I),
+    "BunkerSaved(USD)": re.compile(r"^BunkerSaved|Bunker\(USD\)|BunkerSaved\(USD\)", re.I),
+    "CarbonAbatement(Tonnes)": re.compile(r"^CarbonAbatement|Tonnes$", re.I),
+    "BerthTime(hours):ATU-ATB": re.compile(r"^BerthTime\(hours\):ATU-ATB|BerthTime", re.I),
+    "ATB(LocalTime)": re.compile(r"^ATB\(LocalTime\)|ATB\(Local\)|ATB$", re.I),
+}
+
+# Business Unit → Region mapping (extend as needed)
 BU_TO_REGION = {
     "ANTWERP": "EMEA",
     "BUSAN": "APAC",
-    "DAMMAM": "ME",           # Middle East
+    "DAMMAM": "ME",
     "JAKARTA": "APAC",
     "LAEMCHABANG": "APAC",
     "MUMBAI": "APAC",
@@ -24,332 +78,170 @@ BU_TO_REGION = {
     "TIANJIN": "APAC",
 }
 
-PSA_STRATEGY_GUARDRAIL = (
-    "PSA’s strategy is a Globally Connected Network: optimize the whole network, "
-    "not only individual terminals. Prefer cross-hub coordination, schedule integrity, "
-    "transshipment connectivity, predictable handoffs, and resilience. Avoid actions that "
-    "merely shift congestion or cost from one BU/region to another. When proposing actions "
-    "or insights, note network-wide impacts, upstream/downstream dependencies, and data/ops "
-    "coordination needed across BUs/regions and partners."
-)
+# ======= Environment / LLM (optional scaffolding) =======
+load_dotenv(Path(__file__).with_name(".env"))
+
+try:
+    from langchain_openai import AzureChatOpenAI
+    from langchain_core.runnables import RunnableParallel, RunnableLambda
+    from langchain_core.prompts import ChatPromptTemplate
+except Exception:
+    AzureChatOpenAI = None
+    RunnableParallel = None
+    RunnableLambda = None
+    ChatPromptTemplate = None
+
+API_VERSION = os.getenv("OPENAI_API_VERSION") or os.getenv("AZURE_OPENAI_API_VERSION")
+DEPLOYMENT = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT")
+AZURE_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+RAW_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+
+_LLM = None
+def get_llm():
+    global _LLM
+    if _LLM is not None:
+        return _LLM
+    if AzureChatOpenAI is None:
+        raise RuntimeError("LangChain/AzureChatOpenAI not available")
+    _LLM = AzureChatOpenAI(
+        azure_deployment=DEPLOYMENT,
+        azure_endpoint=RAW_ENDPOINT,
+        api_key=AZURE_KEY,
+        api_version=API_VERSION,
+        temperature=0.2,
+    )
+    _LLM.invoke("ping")
+    return _LLM
+
+# ======= Data loading with flexible mapping =======
+DATA_PATH = Path("data_data.csv")
+
+_df: pd.DataFrame = pd.DataFrame()
+_num_columns: List[str] = []
+_loaded_path: Optional[Path] = None
+_header_map: Dict[str, str] = {}  # canonical -> actual column name
+
+def _build_header_map(df: pd.DataFrame) -> Dict[str, str]:
+    normed = {c: _norm_header(str(c)) for c in df.columns}
+    rev = {v: c for c, v in normed.items()}
+    mapping = {}
+
+    # exact canonical list first
+    def try_set(key: str, candidates: List[str]):
+        for cand in candidates:
+            n = _norm_header(cand)
+            if n in rev:
+                mapping[key] = rev[n]
+                return True
+        return False
+
+    for k, cand_list in CANONICAL.items():
+        try_set(k, cand_list)
+
+    # regex fallbacks
+    for k, rx in REGEX_FALLBACKS.items():
+        if k in mapping:
+            continue
+        for original_norm, original_col in normed.items():
+            # original_norm is the original column name, original_col is normalized; fix variable names:
+            pass
+    # Correct the above minor mistake:
+    mapping2 = dict(mapping)
+    for k, rx in REGEX_FALLBACKS.items():
+        if k in mapping2:
+            continue
+        for col_name in df.columns:
+            if rx.search(_norm_header(col_name)):
+                mapping2[k] = col_name
+                break
+    return mapping2
 
 def _ensure_region(df: pd.DataFrame) -> pd.DataFrame:
     if "Region" in df.columns:
         return df
-    if "BU" in df.columns:
+    bu_actual = _header_map.get("BU")
+    if bu_actual and bu_actual in df.columns:
         df["Region"] = (
-            df["BU"].astype(str).str.strip().str.upper()
-              .map(BU_TO_REGION).fillna("OTHER")
+            df[bu_actual].astype(str).str.strip().str.upper().map(BU_TO_REGION).fillna("OTHER")
         )
     return df
 
 def _coerce_numeric(df: pd.DataFrame) -> list[str]:
-    """
-    Convert number-like text to real numbers, but only mark a column as numeric if:
-      - it has *enough* valid numeric values after coercion (>= max(3, 10% of rows)), and
-      - it's not actually a datetime-like column.
-    Special-case: ArrivalAccuracy(FinalBTR) maps 'Y'/'N' -> 1/0 and is always numeric.
-    """
     numeric_cols: list[str] = []
-
-    # How many valid numeric cells must we see before we accept a column as numeric?
     n_rows = len(df)
-    min_valid = max(3, int(0.10 * n_rows))  # at least 3 cells or 10% of rows
+    min_valid = max(3, int(0.10 * n_rows))
 
-    ARRIVAL_COL = ALIASES["arrival_accuracy"][0]  # "ArrivalAccuracy(FinalBTR)"
-
-    for col in df.columns:
-        s = df[col]
-
-        # 0) Skip obvious junk columns like "Unnamed: 24"
-        if isinstance(col, str) and col.startswith("Unnamed:"):
-            continue
-
-        # 1) Special-case arrival accuracy: map Y/N -> 1/0 strictly
-        if col == ARRIVAL_COL:
-            if s.dtype == "O":
-                mapped = s.astype(str).str.strip().str.upper().map({"Y": 1, "N": 0})
-                coerced = pd.to_numeric(mapped, errors="coerce")
-            else:
-                coerced = pd.to_numeric(s, errors="coerce")
+    # Arrival accuracy coercion (Y/N → 1/0)
+    aa_key = "ArrivalAccuracy(FinalBTR)"
+    if aa_key in _header_map:
+        col = _header_map[aa_key]
+        if col in df.columns:
+            s = df[col]
+            mapped = s.astype(str).str.strip().str.upper().map({"Y": 1, "N": 0})
+            coerced = pd.to_numeric(mapped, errors="coerce")
             df[col] = coerced
-            # Accept if we see enough valid 0/1 numbers
             if coerced.notna().sum() >= min_valid:
                 numeric_cols.append(col)
-            continue
 
-        # 2) If it's already numeric dtype, keep it
+    for col in df.columns:
+        if col == _header_map.get(aa_key, ""):
+            continue
+        if isinstance(col, str) and col.startswith("Unnamed:"):
+            continue
+        s = df[col]
         if pd.api.types.is_numeric_dtype(s):
             numeric_cols.append(col)
             continue
-
-        # 3) Detect datetime-like columns & leave them as datetime (not numeric)
         if s.dtype == "O":
-            # Try parse a sample; if at least half parse to datetimes, treat as datetime
-            dt = pd.to_datetime(s, errors="coerce", dayfirst=True)
-            parsed_ratio = dt.notna().mean()
-            if parsed_ratio >= 0.50:
-                # Keep datetime; write back parsed values (useful for later)
-                df[col] = dt
+            # prevent parsing obvious datetime columns
+            if any(k in _header_map and _header_map[k] == col for k in ["ATB(LocalTime)", "ABT(LocalTime)", "ATU(LocalTime)", "FinalBTR(LocalTime)"]):
+                # parse datetime, but don't add to numeric
+                df[col] = pd.to_datetime(s, errors="coerce", dayfirst=True)
                 continue
-
-        # 4) Generic numeric coercion for text columns
-        if s.dtype == "O":
             cleaned = (
-                s.astype(str)
-                 .str.strip()
+                s.astype(str).str.strip()
                  .replace({"": None, "NA": None, "NaN": None}, regex=False)
                  .str.replace(",", "", regex=False)
                  .str.replace("%", "", regex=False)
             )
             coerced = pd.to_numeric(cleaned, errors="coerce")
-            valid = coerced.notna().sum()
-
-            # Only accept as numeric if enough valid values exist
-            if valid >= min_valid:
+            if coerced.notna().sum() >= min_valid:
                 df[col] = coerced
                 numeric_cols.append(col)
-            # else: leave the original strings as-is (non-numeric)
-
     return numeric_cols
 
-def force_recoerce() -> dict:
-    """
-    Re-run numeric coercion (including mapping 'Y'/'N'→1/0 for ArrivalAccuracy(FinalBTR))
-    on the in-memory dataframe and report before/after.
-    """
-    global _num_columns
-
-    # Which column are we coercing specially?
-    arrival_col = ALIASES.get("arrival_accuracy", [None])[0]
-
-    before = str(_df[arrival_col].dtype) if (arrival_col and arrival_col in _df.columns) else "N/A"
-
-    # re-run coercion in-place
-    _num_columns = _coerce_numeric(_df)
-
-    after = str(_df[arrival_col].dtype) if (arrival_col and arrival_col in _df.columns) else "N/A"
-
-    report = {
-        "path": str(DATA_PATH),
-        "arrival_col": arrival_col,
-        "dtype_before": before,
-        "dtype_after": after,
-        "numeric_columns": list(_num_columns),
-    }
-    if arrival_col and arrival_col in _df.columns:
-        report["value_counts_after"] = _df[arrival_col].value_counts(dropna=False).to_dict()
-        report["sample_after"] = _df[arrival_col].head(12).tolist()
-    return report
-
-# ===== Week derivation (robust for your formats) =====
-DATE_CANDIDATES = [
-    "ATB(LocalTime)",         # prefer this
-    "FinalBTR(LocalTime)",    # fallback if ATB is missing/empty
-    "ATU (LocalTime)",
-    "ABT (LocalTime)",
-]
-
-def _normalize_dt_strings(s: pd.Series) -> pd.Series:
-    """
-    Normalize your date strings:
-    - ensure a space between the date and time even if the hour is 1 or 2 digits
-      e.g. '23-04-2511:30' -> '23-04-25 11:30', '29-03-258:30' -> '29-03-25 8:30'
-    - unify separators, trim spaces, drop empty
-    """
-    if s.dtype != "O":
-        return s
-    out = (
-        s.astype(str)
-         .str.strip()
-         .str.replace("\u00a0", " ", regex=False)    # NBSP → space
-         .str.replace("/", "-", regex=False)         # just in case
-         .str.replace(r"\s+", " ", regex=True)       # collapse internal spaces
-         # insert exactly one space between date (dd-mm-yy) and time (H:MM or HH:MM)
-         .str.replace(r"^(\d{1,2}-\d{1,2}-\d{2})\s*(\d{1,2}:\d{2})$",
-                      r"\1 \2", regex=True)
-    )
-    out = out.replace({"": None, "NA": None, "NaN": None})
-    return out
-
-def _parse_dt_series(s: pd.Series) -> pd.Series:
-    """Parse dates deterministically. Try explicit formats first, then fallback."""
-    if s.dtype != "O":
-        return pd.to_datetime(s, errors="coerce")  # already datelike
-
-    s_norm = (
-        s.astype(str).str.strip()
-         .str.replace("\u00a0", " ", regex=False)
-         .str.replace("/", "-", regex=False)  # unify separators
-         .str.replace(r"\s+", " ", regex=True)
-         # ensure 'dd-mm-yy HH:MM' shape if time glued to date
-         .str.replace(r"^(\d{1,2}-\d{1,2}-\d{2,4})\s*(\d{1,2}:\d{2})$", r"\1 \2", regex=True)
-    )
-
-    # Try explicit formats (common in your CSVs)
-    for fmt in ("%d-%m-%y %H:%M", "%d-%m-%Y %H:%M", "%d-%m-%y", "%d-%m-%Y"):
-        dt = pd.to_datetime(s_norm, format=fmt, errors="coerce")
-        if dt.notna().mean() >= 0.5:
-            return dt
-
-    # Last resort: generic parser (kept, but now rare)
-    return pd.to_datetime(s_norm, errors="coerce", dayfirst=True)
-
-
-def _best_datetime_column(df: pd.DataFrame) -> tuple[Optional[str], Optional[pd.Series]]:
-    """Pick the candidate date column with the highest parse rate."""
-    best_col, best_dt, best_rate = None, None, -1.0
-    for col in DATE_CANDIDATES:
-        if col not in df.columns:
-            continue
-        dt = _parse_dt_series(df[col])
-        rate = dt.notna().mean()
-        if rate > best_rate and rate > 0:
-            best_col, best_dt, best_rate = col, dt, rate
-    return best_col, best_dt
-
-def _ensure_week(df: pd.DataFrame) -> pd.DataFrame:
-    """Create 'Week' (YYYY-Www) and 'WeekStart' (Monday date) from the best datetime column."""
-    if "Week" in df.columns and "WeekStart" in df.columns:
+def _ensure_month(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure a Month key 'YYYY-MM' exists using explicit Year/Month or derived from ATB(LocalTime)."""
+    if "MonthKey" in df.columns:
         return df
 
-    col, dt = _best_datetime_column(df)
-    if not col or dt is None:
-        return df
+    # Prefer explicit Year/Month columns if present
+    year_col = _header_map.get("Year")
+    month_col = _header_map.get("Month")
+    if year_col in df.columns if year_col else False:
+        if month_col in df.columns if month_col else False:
+            y = pd.to_numeric(df[year_col], errors="coerce").astype("Int64")
+            m = pd.to_numeric(df[month_col], errors="coerce").astype("Int64")
+            mask = y.notna() & m.notna()
+            mk = pd.Series([None]*len(df), dtype="object")
+            mk.loc[mask] = (
+                y.astype(int).astype(str).str.zfill(4) + "-" + m.astype(int).astype(str).str.zfill(2)
+            ).loc[mask]
+            df["MonthKey"] = mk
+            return df
 
-    mask = dt.notna()
-    iso = dt.dt.isocalendar()
+    # Else derive from best datetime column
+    for key in ["ATB(LocalTime)", "FinalBTR(LocalTime)", "ABT(LocalTime)", "ATU(LocalTime)"]:
+        col = _header_map.get(key)
+        if col and col in df.columns:
+            dt = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
+            mk = dt.dt.to_period("M").astype(str)
+            df["MonthKey"] = mk
+            return df
 
-    if "Week" not in df.columns:
-        df["Week"] = pd.Series([pd.NA] * len(df), dtype="object")
-    if "WeekStart" not in df.columns:
-        df["WeekStart"] = pd.NaT
-
-    # assign ONLY for parseable rows
-    df.loc[mask, "Week"] = (
-        iso["year"].astype("Int64").astype(str)
-        + "-W"
-        + iso["week"].astype("Int64").astype(str).str.zfill(2)
-    )[mask]
-    df.loc[mask, "WeekStart"] = (dt - pd.to_timedelta(dt.dt.weekday, unit="D")).dt.normalize()[mask]
-
-    # keep parsed datetimes in the chosen column
-    df[col] = dt
+    # Fallback: nothing to do
+    df["MonthKey"] = None
     return df
-
-
-
-
-
-
-
-# --- Load env from backend/.env ---
-load_dotenv(Path(__file__).with_name(".env"))
-
-# ========= LangChain / Azure OpenAI =========
-from langchain_openai import AzureChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableParallel, RunnableLambda
-
-# Prefer OPENAI_API_VERSION if set, otherwise AZURE_OPENAI_API_VERSION
-API_VERSION = os.getenv("OPENAI_API_VERSION") or os.getenv("AZURE_OPENAI_API_VERSION")
-DEPLOYMENT = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT")
-AZURE_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-RAW_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")  # e.g. https://psacodesprint2025.azure-api.net/openai
-
-if not (API_VERSION and DEPLOYMENT and AZURE_KEY and RAW_ENDPOINT):
-    raise RuntimeError("Missing Azure env vars for LangChain (endpoint/version/deployment/key). Check backend/.env")
-
-_LLM: Optional[AzureChatOpenAI] = None
-_LLM_ENDPOINT_USED: Optional[str] = None  # which endpoint variant succeeded
-
-def _normalize_endpoints(base: str) -> List[str]:
-    """Return both endpoint variants (with and without /openai) to handle SDK differences."""
-    base = base.rstrip("/")
-    if base.endswith("/openai"):
-        variants = [base, base.rsplit("/openai", 1)[0]]
-    else:
-        variants = [base, f"{base}/openai"]
-    # unique, preserve order
-    out, seen = [], set()
-    for v in variants:
-        if v not in seen:
-            out.append(v); seen.add(v)
-    return out
-
-def _try_make_llm(endpoint: str) -> AzureChatOpenAI:
-    # IMPORTANT: use api_version= (not openai_api_version=)
-    return AzureChatOpenAI(
-        azure_deployment=DEPLOYMENT,
-        azure_endpoint=endpoint,
-        api_key=AZURE_KEY,
-        api_version=API_VERSION,
-        temperature=0.2,
-    )
-
-def _warmup_ping(llm: AzureChatOpenAI) -> None:
-    # cheap probe to catch 404/401 quickly with readable error
-    llm.invoke("ping")
-
-def get_llm() -> AzureChatOpenAI:
-    """Lazy-initialize the LLM with endpoint fallback; cache the working one."""
-    global _LLM, _LLM_ENDPOINT_USED
-    if _LLM is not None:
-        return _LLM
-    errors = []
-    for ep in _normalize_endpoints(RAW_ENDPOINT):
-        try:
-            cand = _try_make_llm(ep)
-            _warmup_ping(cand)
-            _LLM = cand
-            _LLM_ENDPOINT_USED = ep
-            print(f"✅ LangChain LLM ready (endpoint: {ep}, deploy: {DEPLOYMENT}, version: {API_VERSION})")
-            return _LLM
-        except Exception as e:
-            errors.append((ep, str(e)))
-    raise RuntimeError(f"LLM init failed. Tried endpoints: {errors}")
-
-# ========= Data loading / helpers =========
-
-# You can set DATA_PATH in backend/.env to point to a specific file.
-# If unset, default to data/reference_sample_data.csv
-DATA_PATH = Path("data/reference_sample_data.csv")
-
-# Optional: if DATA_PATH is a directory, auto-pick the newest CSV in it.
-if DATA_PATH.is_dir():
-    csvs = sorted(DATA_PATH.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if csvs:
-        DATA_PATH = csvs[0]
-
-_df: pd.DataFrame = pd.DataFrame()
-_num_columns: List[str] = []
-_loaded_path: Optional[Path] = None
-
-# Aliases locked to your exact headers
-ALIASES = {
-    "arrival_accuracy":           ["ArrivalAccuracy(FinalBTR)"],
-    "berth_time_hrs":             ["Berth Time(hours):ATU-ATB"],
-    "assured_port_time_pct":      ["AssuredPortTimeAchieved(%)"],
-    "carbon_tonnes":              ["Carbon Abatement (Tonnes)"],
-    "bunker_saved_usd":           ["Bunker Saved(USD)"],
-    "week":                       ["Week"],
-    "date":                       ["ATB(LocalTime)"],
-    "group_bu":                   ["BU"],
-}
-
-ALIASES["week"] = ["Week"]
-
-def _pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
-    # exact match first
-    for c in candidates:
-        if c in df.columns:
-            return c
-    # case-insensitive fallback
-    lowermap = {c.lower(): c for c in df.columns if isinstance(c, str)}
-    for c in candidates:
-        if isinstance(c, str) and c.lower() in lowermap:
-            return lowermap[c.lower()]
-    return None
 
 def _try_read(path: Path) -> pd.DataFrame:
     if not path.exists():
@@ -357,23 +249,30 @@ def _try_read(path: Path) -> pd.DataFrame:
     if path.suffix.lower() in (".xlsx", ".xls"):
         return pd.read_excel(path)
     if path.suffix.lower() == ".csv":
-        # If your CSV uses a different delimiter, set sep=";" etc.
         return pd.read_csv(path)
     raise ValueError(f"Unsupported file type: {path.suffix}")
 
 def load_data(path: Union[str, Path] = DATA_PATH):
-    global _df, _num_columns, _loaded_path
+    global _df, _num_columns, _loaded_path, _header_map
     p = Path(path)
     _df = _try_read(p)
-    _df.columns = _df.columns.map(lambda c: c.strip() if isinstance(c, str) else c)
-    _df = _ensure_week(_df)            # <-- derive Week
-    _df = _ensure_region(_df)   # 👈 add this
-    _num_columns = _coerce_numeric(_df) # <-- then coerce numerics
+    # build header map
+    _header_map = _build_header_map(_df)
+    # strip whitespace on columns (preserve original names)
+    _df.columns = [c for c in _df.columns]
+    _df = _ensure_month(_df)
+    _df = _ensure_region(_df)
+    _num_columns = _coerce_numeric(_df)
     _loaded_path = p
-    return {"ok": True, "rows": len(_df), "cols": list(_df.columns), "path": str(p)}
+    return {
+        "ok": True,
+        "rows": len(_df),
+        "cols": list(_df.columns),
+        "path": str(p),
+        "resolved_headers": _header_map,
+    }
 
-
-# eager load (okay to fail softly at boot)
+# eager load (soft)
 try:
     load_data()
 except Exception as e:
@@ -387,62 +286,51 @@ def get_basic_info():
         "row_count": int(len(_df)),
         "numeric_columns": _num_columns,
         "source_path": str(_loaded_path) if _loaded_path else None,
+        "resolved_headers": _header_map,
     }
 
+# =========== Filters & helpers ===========
 def apply_filters(filters: Optional[Dict[str, List[Union[str, int, float]]]] = None) -> pd.DataFrame:
     if _df.empty or not filters:
         return _df.copy()
     d = _df.copy()
     for col, allowed in (filters or {}).items():
-        if col not in d.columns or not isinstance(allowed, (list, tuple, set)):
+        # map canonical names to actual names if provided
+        actual = _header_map.get(col, col)
+        if actual not in d.columns:
             continue
         vals = allowed
-
-        # Case-insensitive, whitespace-tolerant matching for string-like columns
-        if pd.api.types.is_object_dtype(d[col]):
-            left  = d[col].astype(str).str.strip().str.upper()
+        if pd.api.types.is_object_dtype(d[actual]):
+            left = d[actual].astype(str).str.strip().str.upper()
             right = pd.Series(list(vals), dtype="object").astype(str).str.strip().str.upper()
             d = d[left.isin(set(right))]
         else:
-            d = d[d[col].isin(list(vals))]
+            d = d[d[actual].isin(list(vals))]
     return d
 
+def _col(name: str) -> Optional[str]:
+    """Return actual column name for a canonical name."""
+    return _header_map.get(name)
 
-# ========= Analytics helpers =========
-
-def _arrival_col() -> Optional[str]:
-    if _df.empty:
-        return None
-    return _pick_col(_df, ALIASES["arrival_accuracy"])  # no keyword fallback
-
+# =========== KPI snapshot (means/sums over filters) ===========
 def kpi_snapshot(filters: Optional[Dict] = None) -> Dict[str, Optional[float]]:
-    """
-    Compute a compact KPI set.
-    - ArrivalAccuracy(FinalBTR): reported as a PERCENT (0–100), assuming the column has been
-      coerced to 0/1 (Y/N mapped earlier in _coerce_numeric).
-    - Other numeric KPIs are reported as float means or sums.
-    """
     if _df.empty:
         return {"error": "Dataset not loaded properly."}
-
     d = apply_filters(filters)
 
-    def avg(alias_key: str) -> Optional[float]:
-        col = _pick_col(d, ALIASES[alias_key])
-        if not col:
+    def _mean(canon: str, pct: bool=False) -> Optional[float]:
+        col = _col(canon)
+        if not col or col not in d.columns:
             return None
-        vals = pd.to_numeric(d[col], errors="coerce")
-        vals = vals.dropna()
+        vals = pd.to_numeric(d[col], errors="coerce").dropna()
         if vals.empty:
             return None
-        # Special case: arrival accuracy is binary 0/1 -> report percent
-        if alias_key == "arrival_accuracy":
-            return round(float(vals.mean() * 100.0), 2)
-        return round(float(vals.mean()), 3)
+        m = float(vals.mean())
+        return round(m * (100.0 if pct else 1.0), 3)
 
-    def total(alias_key: str) -> Optional[float]:
-        col = _pick_col(d, ALIASES[alias_key])
-        if not col:
+    def _sum(canon: str) -> Optional[float]:
+        col = _col(canon)
+        if not col or col not in d.columns:
             return None
         vals = pd.to_numeric(d[col], errors="coerce").dropna()
         if vals.empty:
@@ -450,216 +338,86 @@ def kpi_snapshot(filters: Optional[Dict] = None) -> Dict[str, Optional[float]]:
         return round(float(vals.sum()), 3)
 
     out = {
-        "arrival_accuracy_avg":        avg("arrival_accuracy"),      # percent
-        "berth_time_avg_hrs":          avg("berth_time_hrs"),
-        "assured_port_time_pct":       avg("assured_port_time_pct"),
-        "carbon_total_t":              total("carbon_tonnes"),
-        "bunker_saved_usd":            total("bunker_saved_usd"),
-        "filters_applied":             filters or {},
+        "arrival_accuracy_avg_pct": _mean("ArrivalAccuracy(FinalBTR)", pct=True),
+        "berth_time_avg_hours": _mean("BerthTime(hours):ATU-ATB"),
+        "assured_port_time_pct": _mean("AssuredPortTimeAchieved(%)"),
+        "carbon_total_tonnes": _sum("CarbonAbatement(Tonnes)"),
+        "bunker_saved_usd": _sum("BunkerSaved(USD)"),
+        "filters_applied": filters or {},
     }
     return out
 
-
-def summarize_metric(metric: str, filters: Optional[Dict] = None) -> Dict[str, Optional[Union[str, float]]]:
+# =========== Month-over-Month summarizer ===========
+def summarize_metric(metric: str, filters: Optional[Dict] = None, level: str = "month") -> Dict[str, Optional[Union[str, float]]]:
     """
-    WoW summary for a given metric.
-    - Requires a 'Week' column (derived earlier).
-    - If metric is ArrivalAccuracy(FinalBTR) interpreted as 0/1, reports current/previous as PERCENT
-      and delta as PERCENTAGE POINTS; else delta is % change vs previous mean.
+    Summarize a metric over time (default: month). Computes current vs previous period and percent/pp delta.
+    For ArrivalAccuracy(FinalBTR) we treat underlying data as 0/1 and report percentage.
     """
     if _df.empty:
         return {"error": "Dataset not loaded properly."}
-    if metric not in _df.columns:
+    d = apply_filters(filters)
+
+    # resolve actual metric column
+    mcol = _col(metric) or metric
+    if mcol not in d.columns:
         return {"error": f"Metric '{metric}' not found in dataset."}
 
-    d = apply_filters(filters)
+    # choose time key
+    if level != "month":
+        level = "month"
+    tkey = "MonthKey"
+    if tkey not in d.columns:
+        return {"error": "No 'MonthKey' column available."}
 
-    # resolve week column
-    week_col = _pick_col(d, ALIASES["week"]) or _pick_col(d, ["Week"])
-    if not week_col:
-        return {"error": "No 'week' column found in dataset."}
-
-    # ensure numeric
-    if not pd.api.types.is_numeric_dtype(d[metric]):
-        d[metric] = pd.to_numeric(d[metric], errors="coerce")
-
-    # collect weeks (sortable)
-    weeks = [w for w in pd.unique(d[week_col]) if pd.notna(w)]
-    try:
-        weeks_sorted = sorted(weeks)
-    except Exception:
-        weeks_sorted = sorted(map(str, weeks))
-    if len(weeks_sorted) < 2:
-        return {"error": "Not enough weeks to compute trend."}
-
-    latest, prev = weeks_sorted[-1], weeks_sorted[-2]
-    cur = d[d[week_col] == latest]
-    old = d[d[week_col] == prev]
-
-    cur_mean = cur[metric].astype(float).mean()
-    old_mean = old[metric].astype(float).mean()
-
-    # Is this our arrival-accuracy metric?
-    is_arrival = (metric == (ALIASES["arrival_accuracy"][0] if ALIASES.get("arrival_accuracy") else metric))
-
-    if is_arrival:
-        # Treat as 0..1; present as percentages; delta in percentage points
-        cur_pct = None if pd.isna(cur_mean) else cur_mean * 100.0
-        old_pct = None if pd.isna(old_mean) else old_mean * 100.0
-        delta_pp = None if (cur_pct is None or old_pct is None) else (cur_pct - old_pct)
-        return {
-            "metric": metric,
-            "latest_week": latest,
-            "previous_week": prev,
-            "current_mean": None if cur_pct is None else round(float(cur_pct), 2),
-            "previous_mean": None if old_pct is None else round(float(old_pct), 2),
-            "delta_percent": None if delta_pp is None else round(float(delta_pp), 2),  # percentage points
-            "unit": "percentage_points",
-            "filters_applied": filters or {},
-        }
-
-    # Default: percent change vs previous mean
-    if pd.isna(old_mean) or old_mean == 0:
-        delta_pct = np.nan
-    else:
-        delta_pct = (cur_mean - old_mean) / old_mean * 100.0
-
-    return {
-        "metric": metric,
-        "latest_week": latest,
-        "previous_week": prev,
-        "current_mean": None if pd.isna(cur_mean) else round(float(cur_mean), 3),
-        "previous_mean": None if pd.isna(old_mean) else round(float(old_mean), 3),
-        "delta_percent": None if pd.isna(delta_pct) else round(float(delta_pct), 2),
-        "filters_applied": filters or {},
-    }
-
-
-def anomalies_by_group(metric: str, group_col: Optional[str] = None, top_n: int = 3, filters: Optional[Dict] = None):
-    if _df.empty:
-        return {"error": "Dataset not loaded properly."}
-    d = apply_filters(filters)
-    if group_col is None:
-        group_col = _pick_col(d, ALIASES["group_bu"]) or "BU"
-    if group_col not in d.columns:
-        return {"error": f"Group column '{group_col}' not found."}
-    if metric not in d.columns:
-        return {"error": f"Metric '{metric}' not found."}
-
-    vals = pd.to_numeric(d[metric], errors="coerce")
-    d = d.assign(_metric=vals).dropna(subset=["_metric"])
-    if d.empty:
+    # coerce numeric
+    vals = pd.to_numeric(d[mcol], errors="coerce")
+    s = d.assign(_v=vals).dropna(subset=["_v"])
+    if s.empty:
         return {"error": f"No numeric values for metric '{metric}' after coercion."}
 
-    by_grp = d.groupby(group_col)["_metric"].mean().reset_index()
-    mu, sd = by_grp["_metric"].mean(), by_grp["_metric"].std(ddof=0)
-    by_grp["z"] = 0.0 if (pd.isna(sd) or sd == 0) else (by_grp["_metric"] - mu) / sd
+    # aggregate mean per month
+    g = s.groupby(tkey)["_v"].mean().reset_index()
+    g = g[g[tkey].notna()].sort_values(tkey)
+    if len(g) < 2:
+        return {"error": "Not enough months to compute trend."}
 
-    highest = by_grp.nlargest(top_n, "z").to_dict(orient="records")
-    lowest = by_grp.nsmallest(top_n, "z").to_dict(orient="records")
-    return {
-        "metric": metric,
-        "group_col": group_col,
-        "highest": highest,
-        "lowest": lowest,
-        "filters_applied": filters or {},
-    }
+    latest, prev = g.iloc[-1], g.iloc[-2]
+    cur_mean = float(latest["_v"])
+    old_mean = float(prev["_v"])
 
-# ========= LangChain parallel workers =========
-
-def _trend_worker(ctx):
-    metric = ctx.get("metric_override") or _arrival_col()
-    if not metric:
-        return {"Trend": {"error": "Arrival Accuracy column not found."}}
-    return {"Trend": summarize_metric(metric, ctx.get("filters"))}
-
-def _kpi_worker(ctx):
-    return {"KPI": kpi_snapshot(ctx.get("filters"))}
-
-def _anomaly_worker(ctx):
-    metric = ctx.get("metric_override") or _arrival_col()
-    if not metric:
-        return {"Anomalies": {"error": "Arrival Accuracy column not found."}}
-    return {"Anomalies": anomalies_by_group(metric, filters=ctx.get("filters"))}
-
-KPI_CHAIN = RunnableLambda(_kpi_worker)
-ANOM_CHAIN = RunnableLambda(_anomaly_worker)
-TREND_CHAIN = RunnableLambda(_trend_worker)
-
-PARALLEL = RunnableParallel(KPI=KPI_CHAIN, Anomalies=ANOM_CHAIN, Trend=TREND_CHAIN)
-
-# ========= Prompts & final composition =========
-
-ACTION_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You are PSA's network strategist. "
-     "Ground all recommendations in the following principle:\n"
-     "{strategy}\n\n"
-     "Based on KPIs, anomalies and trend, output 3–5 short, imperative, measurable actions "
-     "with clear owners and timeframes. Use relative timeframes (e.g., 'within 2 weeks'). "
-     "Each action must include a brief network-level rationale (how it improves global flow, "
-     "handoffs, and schedule integrity), and name cross-BU/region counterparts where relevant."
-    ),
-    ("human", "KPI JSON:\n{kpi}\n\nAnomalies JSON:\n{anom}\n\nTrend JSON:\n{trend}\n\nUser question:\n{q}")
-])
-
-SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "Senior operations analyst with a network-first mindset. "
-     "Lens to apply:\n{strategy}\n\n"
-     "Write 6–10 concise bullets covering: "
-     "(1) KPIs vs typical, (2) unusually good/bad, (3) likely drivers across the network, "
-     "(4) specific next actions with owners + timeframes, (5) expected network-wide impact "
-     "and risks/tradeoffs, (6) data/ops coordination required across BUs/regions."
-    ),
-    ("human", "Inputs JSON:\n{inputs}\n\nUser question:\n{q}")
-])
-
-def _suggest_actions(par_out: dict, question: str) -> str:
-    llm = get_llm()
-    msg = ACTION_PROMPT.format_messages(
-        strategy=PSA_STRATEGY_GUARDRAIL,
-        kpi=json.dumps(par_out.get("KPI"), default=str),
-        anom=json.dumps(par_out.get("Anomalies"), default=str),
-        trend=json.dumps(par_out.get("Trend"), default=str),
-        q=question
-    )
-    return llm.invoke(msg).content
-
-def explain(question: str, ui_filters: Optional[Dict] = None, metric_override: Optional[str] = None):
-    """
-    Run parallel analytics → generate actions → final exec summary.
-    Returns: (merged_dict, summary_text)
-    """
-    ctx = {"filters": ui_filters or {}, "metric_override": metric_override}
-    par = PARALLEL.invoke(ctx)  # KPI / Anomalies / Trend in parallel
-    actions = _suggest_actions(par, question)
-    merged = {**par, "Actions": actions}
-
-    llm = get_llm()
-    summary = llm.invoke(SUMMARY_PROMPT.format_messages(
-        strategy=PSA_STRATEGY_GUARDRAIL, inputs=json.dumps(merged, default=str), q=question
-    )).content
-    return merged, summary
-
-def _norm_filters(filters_json: str | None):
-    if not filters_json:
-        return {}
-    try:
-        f = _json.loads(filters_json)
-        if isinstance(f, dict):
-            return f
-    except Exception:
-        pass
-    return {}
-
+    # arrival accuracy treated as percent
+    is_arrival = metric in ("ArrivalAccuracy(FinalBTR)", _col("ArrivalAccuracy(FinalBTR)"))
+    if is_arrival:
+        cur_pct = cur_mean * 100.0
+        old_pct = old_mean * 100.0
+        delta_pp = cur_pct - old_pct
+        unit = "percentage_points"
+        return {
+            "metric": metric,
+            "latest_month": latest[tkey],
+            "previous_month": prev[tkey],
+            "current_mean": round(cur_pct, 2),
+            "previous_mean": round(old_pct, 2),
+            "delta_percent": round(delta_pp, 2),
+            "unit": unit,
+            "filters_applied": filters or {},
+        }
+    else:
+        # % change vs previous
+        if old_mean == 0 or np.isnan(old_mean):
+            delta_pct = np.nan
+        else:
+            delta_pct = (cur_mean - old_mean) / old_mean * 100.0
+        return {
+            "metric": metric,
+            "latest_month": latest[tkey],
+            "previous_month": prev[tkey],
+            "current_mean": round(cur_mean, 3),
+            "previous_mean": round(old_mean, 3),
+            "delta_percent": None if np.isnan(delta_pct) else round(delta_pct, 2),
+            "filters_applied": filters or {},
+        }
 
 # ========= Optional: quick CLI self-test =========
 if __name__ == "__main__":
     print("→ Data info:", get_basic_info())
-    try:
-        out, summ = explain("Explain APAC this week.", {"BU": ["APAC"]})
-        print("→ Details keys:", list(out.keys()))
-        print("→ Summary:\n", summ)
-    except Exception as e:
-        print("❌ explain() failed:", e)
