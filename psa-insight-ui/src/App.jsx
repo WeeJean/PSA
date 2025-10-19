@@ -8,7 +8,7 @@ const { TextArea } = Input;
 
 export default function App() {
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [powerBIConfig, setPowerBIConfig] = useState(null); // optional: if agent returns embed
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
@@ -57,8 +57,6 @@ export default function App() {
   const askLLM = async (forcedQuestion) => {
     const q = (forcedQuestion ?? query).trim();
     if (!q) return;
-
-    setLoading(true);
     setMessages((prev) => [...prev, { role: "user", text: q }]);
 
     try {
@@ -265,7 +263,7 @@ export default function App() {
         <div style={{ textAlign: "center" }}>
           <h2 style={{ margin: 0, color: "black" }}>PSA PortSense Dashboard</h2>
           <span style={{ color: "#666" }}>
-            Monitor port performance and get instant insights from your Copilot.
+            Monitor port performance and get instant insights from Bo-men.
           </span>
         </div>
       </header>
@@ -414,7 +412,10 @@ export default function App() {
                       {isBot && isLast && suggestions?.length > 0 && (
                         <SuggestionChips
                           items={suggestions}
-                          onClick={(s) => askLLM(s)}
+                          onClick={(s) => {
+                            setLoading(true);
+                            askLLM(s);
+                          }}
                         />
                       )}
                     </div>
@@ -503,6 +504,7 @@ export default function App() {
                   onPressEnter={(e) => {
                     if (!e.shiftKey) {
                       e.preventDefault();
+                      setLoading(true);
                       askLLM(); // handles adding the user message internally
                     }
                   }}
@@ -511,7 +513,10 @@ export default function App() {
                 />
                 <Button
                   type="primary"
-                  onClick={() => askLLM()} // DO NOT manually push messages here
+                  onClick={() => {
+                    setLoading(true);
+                    askLLM();
+                  }} // DO NOT manually push messages here
                   style={{
                     height: "100%",
                     display: "flex",
