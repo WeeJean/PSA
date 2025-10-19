@@ -275,7 +275,7 @@ export default function App() {
           </div>
 
           <span style={{ color: "#666" }}>
-            Monitor port performance and get instant insights from Bo-men.
+            Monitor port performance and get instant insights from Bomen
           </span>
         </div>
       </header>
@@ -352,7 +352,7 @@ export default function App() {
                 }}
               >
                 <img src="./public/BoMen.png" width="30px"></img>
-                ‎ ‎ Ask Bo-men
+                ‎ ‎ AskBoman
                 <div
                   style={{
                     width: "12px",
