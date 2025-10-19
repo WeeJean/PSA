@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Split from "react-split";
-import { Input, Button, Card, Typography, Space } from "antd";
+import { Input, Button } from "antd";
 import PowerBIReport from "./PowerBIReport";
 import ReactMarkdown from "react-markdown";
 
@@ -13,7 +13,7 @@ export default function App() {
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{ role: 'user'|'assistant', text: string, suggestions?: string[] }]
   const hasRun = useRef(false);
-
+  console.log(loading);
   const API_BASE = "http://127.0.0.1:8000";
 
   const DEFAULT_CHIPS = [
@@ -104,6 +104,8 @@ export default function App() {
     const q = (forcedQuestion ?? query).trim();
     if (!q) return;
     setMessages((prev) => [...prev, { role: "user", text: q }]);
+    setLoading(true);
+    setTimeout(() => {}, 5000);
 
     try {
       const lastChips = getLastAssistantChips(messages);
@@ -183,7 +185,10 @@ export default function App() {
         {items.map((s, i) => (
           <button
             key={i}
-            onClick={() => onClick?.(s)}
+            onClick={() => {
+              setQuery("");
+              onClick?.(s);
+            }}
             title={s}
             style={{
               // pill container
@@ -483,7 +488,6 @@ export default function App() {
                         <SuggestionChips
                           items={m.suggestions}
                           onClick={(s) => {
-                            setLoading(true);
                             askLLM(s);
                           }}
                         />
@@ -574,7 +578,6 @@ export default function App() {
                   onPressEnter={(e) => {
                     if (!e.shiftKey) {
                       e.preventDefault();
-                      setLoading(true);
                       askLLM(); // handles adding the user message internally
                     }
                   }}
@@ -584,7 +587,6 @@ export default function App() {
                 <Button
                   type="primary"
                   onClick={() => {
-                    setLoading(true);
                     askLLM();
                   }} // DO NOT manually push messages here
                   style={{
