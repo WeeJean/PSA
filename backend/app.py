@@ -43,47 +43,85 @@ AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://psacodesprint2025.a
 DEPLOYMENT_NAME = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4.1-nano")
 API_VERSION = os.getenv("AZURE_API_VERSION", "2025-01-01-preview")
 
+VERB_START = re.compile(
+    r"^(investigate|analyze|compare|drill|show|trend|summarize|identify|rank|breakdown|benchmark|monitor|reduce|improve|optimi[sz]e|alert|escalate|review|audit|validate|forecast|correlate|segment|isolate|explain|list|filter|focus|deep[- ]?dive)\b",
+    re.I,
+)
+DECLARATIVE = re.compile(
+    r"\b(is|are|has|have|average|avg\.?|hours?|%|tonnes?|usd|\$|shows?|indicates?)\b",
+    re.I,
+)
+
 def _extract_suggestions(text: str, limit: int = 5) -> list[str]:
-    """Turn an 'Actions' paragraph into 3–5 short chips."""
     if not text:
         return []
     lines = [l.strip() for l in str(text).splitlines() if l.strip()]
-
-    cands = []
+    bullets = []
     for l in lines:
         if l.startswith(("-", "*")) or re.match(r"^\d+\.\s+", l):
-            cands.append(l)
-        elif re.match(r"^(increase|reduce|review|investigate|optimi[sz]e|follow up|alert|escalate|deploy|pilot|monitor|coordinate|train|audit|fix|patch|tune|rebalance|re-route|standardi[sz]e|communicate|benchmark|validate)\b", l, re.I):
-            cands.append(l)
-
-    cleaned = [re.sub(r"^[-*\d.]+\s+", "", x).strip() for x in cands]
+            bullets.append(re.sub(r"^[-*\d.]+\s+", "", l).strip())
     out, seen = [], set()
-    for s in cleaned:
-        k = s.lower()
-        if s and k not in seen:
-            seen.add(k)
-            out.append(s[:120])
-            if len(out) >= limit:
-                break
+    for s in bullets:
+        s2 = s.rstrip(".")
+        if VERB_START.match(s2) and not DECLARATIVE.search(s2):
+            k = s2.lower()
+            if k not in seen:
+                seen.add(k)
+                out.append(s2[:120])
+                if len(out) >= limit:
+                    break
     return out
 
-# optional: use the model to synthesize chips if extraction fails
-def _llm_suggestions(context: dict, limit: int = 5) -> list[str]:
+BAD_RX = re.compile(r"\b(is|are|has|have|average|avg\.?|hours?|%|tonnes?|usd|\$|shows?|indicates?)\b", re.I)
+
+def _llm_suggestions(context: dict | str, limit: int = 5) -> list[str]:
+    """Ask the LLM for 3–5 imperative, short next-step queries."""
     try:
+        from insight_engine import get_llm
         llm = get_llm()
-        prompt = (
-            "From the context below, produce "
-            f"{limit} short, imperative next-step suggestions (4–10 words each). "
-            "Return ONLY a JSON array of strings.\n\n"
-            f"CONTEXT:\n{json.dumps(context, default=str)}"
-        )
+        if not isinstance(context, str):
+            context = json.dumps(context, default=str)
+        prompt = f"""You generate NEXT-STEP QUERIES the user can click.
+        Return ONLY a JSON array of {limit} short strings.
+        Rules:
+        - Each item MUST start with an imperative verb (Investigate/Show/Compare/etc.).
+        - 4–10 words, no trailing period.
+        - No plain statements or KPI facts.
+        - Be specific to Region/BU/metric/time when possible.
+
+        Examples:
+        [
+        "Investigate TIANJIN arrival delays this week",
+        "Show WoW trend for BUSAN accuracy",
+        "Rank bottom 3 BUs by arrival accuracy",
+        "Summarize KPI snapshot for APAC",
+        "Drill into berth time drivers in APAC"
+        ]
+
+        CONTEXT:
+        {context}
+        """
+
         raw = llm.invoke(prompt).content
-        arr = json.loads(raw)
-        if isinstance(arr, list):
-            return [str(x)[:120] for x in arr][:limit]
+        items = json.loads(raw)
+        if not isinstance(items, list):
+            return []
+        out, seen = [], set()
+        for s in items:
+            t = str(s).strip().rstrip(".")
+            if not re.match(VERB_START, t, re.I):
+                continue
+            if BAD_RX.search(t):
+                continue
+            k = t.lower()
+            if k not in seen and 4 <= len(t.split()) <= 10:
+                seen.add(k)
+                out.append(t[:120])
+            if len(out) >= limit:
+                break
+        return out
     except Exception:
-        pass
-    return []
+        return []
 
 # ---------- Health / Misc ----------
 @app.get("/")
@@ -219,32 +257,6 @@ def debug_preview_weeks():
     except Exception as e:
         return jsonify({"error": "debug/preview-weeks failed", "details": str(e)}), 500
 
-# @app.get("/llm-config")
-# def llm_config():
-#     try:
-#         from agent_factory import _make_llm
-#         llm = _make_llm()
-#         return jsonify({
-#             "llm_class": llm.__class__.__name__,
-#             "azure_endpoint": getattr(llm, "azure_endpoint", None),
-#             "azure_deployment": getattr(llm, "azure_deployment", None),
-#             "model_or_name": getattr(llm, "model_name", None) or getattr(llm, "model", None),
-#         }), 200
-#     except Exception as e:
-#         import traceback
-#         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
-
-# @app.get("/llm-selftest")
-# def llm_selftest():
-#     try:
-#         from agent_factory import _make_llm
-#         llm = _make_llm()
-#         _ = llm.invoke([{"role": "user", "content": "ping"}])
-#         return jsonify({"ok": True}), 200
-#     except Exception as e:
-#         import traceback
-#         return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()}), 500
-
 @app.post("/recoerce")
 def recoerce():
     try:
@@ -307,73 +319,29 @@ def data_info():
     except Exception as e:
         return jsonify({"error": "data-info failed", "details": str(e)}), 500
 
-# @app.get("/agent-selftest")
-# def agent_selftest():
-#     try:
-#         agent = make_agent()
-#         return jsonify({"executor_class": agent.__class__.__name__, "ok": True})
-#     except Exception as e:
-#         import traceback
-#         return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()}), 500
-    
-# ---------- Single agent endpoint ----------
-# @app.post("/agent-ask")
-# def agent_ask():
-#     try:
-#         body = request.get_json(silent=True) or {}
-#         q = (body.get("question") or "").strip()
-#         history = body.get("history", [])
-#         if not q:
-#             return jsonify({"answer_type":"error","message":"Missing 'question'","payload":{}}), 400
-
-#         agent = make_agent()
-
-#         # Convert simple history into LC messages
-#         history_msgs = []
-#         for t in history:
-#             role = (t.get("role") or "").lower()
-#             content = t.get("content") or ""
-#             if role == "human":
-#                 history_msgs.append(HumanMessage(content=content))
-#             elif role in ("ai","assistant"):
-#                 history_msgs.append(AIMessage(content=content))
-
-#         # Call the simple executor
-#         result = agent.invoke({"input": q, "chat_history": history_msgs})
-#         content = result if isinstance(result, str) else result.get("output", "")
-
-#         try:
-#             envelope = json.loads(content)
-#         except Exception:
-#             envelope = {"answer_type":"text","message":str(content),"payload":{},"tool_calls":[]}
-
-#         for key in ("answer_type","message","payload"):
-#             envelope.setdefault(key, "" if key!="payload" else {})
-#         return jsonify(envelope), 200
-
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#         "answer_type": "error",
-#         "message": "agent failed",
-#         "payload": {"details": str(e), "trace": traceback.format_exc()}
-#     }), 500
-
 @app.post("/ask")
 def ask():
     data = request.get_json(silent=True) or {}
     q = (data.get("question") or data.get("query") or "").strip()
     if not q:
         return jsonify({"error": "Missing 'question'"}), 400
+
     try:
-        result = run_agentic_query(q)  # {text, suggestions[]}
+        text = run_agentic_query(q)  # returns final assistant text only
+
+        # 1) Try to extract imperative chips from the text
+        chips = _extract_suggestions(text, 5)
+
+        # 2) If none, ask the model to synthesize actionable chips
+        if not chips:
+            chips = _llm_suggestions({"question": q, "answer": text}, 5)
+
         return jsonify({
-            "text": result["text"],
-            "details": {"suggestions": result.get("suggestions", [])}
+            "text": text or "(no text)",
+            "details": {"suggestions": chips},
         }), 200
     except Exception as e:
         return jsonify({"error": "agent failed", "details": str(e)}), 500
-
     
 if __name__ == "__main__":
     print("Starting Flask from:", __file__)

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import Split from "react-split";
 import { Input, Button, Card, Typography, Space } from "antd";
 import { Scrollbar } from "react-scrollbars-custom";
@@ -16,8 +16,17 @@ export default function App() {
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
   const [suggestions, setSuggestions] = useState([]); // pipeline next steps
+  const chipRowRef = useRef(null);
+  const [chipRowH, setChipRowH] = useState(40); // reserve space under textarea
 
   const API_BASE = "http://127.0.0.1:8000";
+
+  useLayoutEffect(() => {
+    if (chipRowRef.current) {
+      const h = chipRowRef.current.getBoundingClientRect().height || 40;
+      setChipRowH(h);
+    }
+  }, [suggestions]);
 
   function extractSuggestionsFromText(s, max = 5) {
     if (!s) return [];
@@ -108,16 +117,54 @@ export default function App() {
     }
   };
 
-  const SuggestionChips = ({ items }) => {
+  const SuggestionChips = ({ items, onClick }) => {
     if (!items?.length) return null;
+
     return (
-      <Space wrap style={{ marginTop: 8 }}>
+      <div
+        style={{
+          marginTop: 8,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          width: "100%",
+        }}
+      >
         {items.map((s, i) => (
-          <Button key={i} size="small" onClick={() => askLLM(s)}>
-            {s}
-          </Button>
+          <button
+            key={i}
+            onClick={() => onClick?.(s)}
+            title={s}
+            style={{
+              // pill container
+              border: "1px solid #e0e0e0",
+              background: "#fff",
+              borderRadius: 10, // keeps the rounded “pill” shape even when multi-line
+              padding: "6px 12px",
+              cursor: "pointer",
+              display: "inline-block", // allow natural width + wrapping
+              maxWidth: "100%", // never overflow bubble width
+              textAlign: "left",
+              lineHeight: 1.25,
+              whiteSpace: "normal", // ✅ allow wrapping inside the button
+            }}
+          >
+            <span
+              style={{
+                // ✅ let the text wrap; no ellipsis
+                whiteSpace: "normal",
+                wordBreak: "break-word", // break long words
+                overflowWrap: "anywhere", // Safari/iOS friendly
+                color: "#333",
+                fontSize: 13,
+                display: "inline",
+              }}
+            >
+              {s}
+            </span>
+          </button>
         ))}
-      </Space>
+      </div>
     );
   };
 
@@ -309,31 +356,37 @@ export default function App() {
                         alignSelf: isBot ? "flex-start" : "flex-end",
                         backgroundColor: isBot ? "#f0f0f0" : "#1890ff",
                         color: isBot ? "#000" : "#fff",
-                        padding: "0.5rem 0.75rem",
-                        borderRadius: "12px",
+                        padding: "0.75rem 0.9rem",
+                        borderRadius: 12,
                         maxWidth: "80%",
-                        wordBreak: "break-word",
                         textAlign: "left",
-                        marginBottom: "0.25rem",
+                        marginBottom: 8,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8, // internal spacing between text & chips
+                        boxSizing: "border-box",
                       }}
                     >
-                      {isBot ? <ReactMarkdown>{m.text}</ReactMarkdown> : m.text}
+                      <div
+                        style={{
+                          // keep markdown text constrained to bubble width
+                          overflowWrap: "anywhere",
+                          whiteSpace: "pre-wrap",
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        {isBot ? (
+                          <ReactMarkdown>{m.text}</ReactMarkdown>
+                        ) : (
+                          m.text
+                        )}
+                      </div>
 
-                      {/* Show suggestion chips only under the last assistant message */}
                       {isBot && isLast && suggestions?.length > 0 && (
-                        <div style={{ marginTop: "8px" }}>
-                          <Space wrap>
-                            {suggestions.map((s, i) => (
-                              <Button
-                                key={i}
-                                size="small"
-                                onClick={() => askLLM(s)}
-                              >
-                                {s}
-                              </Button>
-                            ))}
-                          </Space>
-                        </div>
+                        <SuggestionChips
+                          items={suggestions}
+                          onClick={(s) => askLLM(s)}
+                        />
                       )}
                     </div>
                   );

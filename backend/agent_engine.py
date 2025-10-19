@@ -1,5 +1,5 @@
 # agent_engine.py
-import os, re
+import os, re, json
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -136,42 +136,95 @@ prompt = ChatPromptTemplate.from_messages([
 agent_runnable = create_openai_tools_agent(llm, tools, prompt)
 agent = AgentExecutor(agent=agent_runnable, tools=tools, verbose=False)
 
-SUGG_VERB_RX = r"^(increase|reduce|review|investigate|optimi[sz]e|monitor|coordinate|escalate|deploy|pilot|train|audit|fix|patch|tune|rebalance|re[- ]?route|communicate|benchmark|validate|improve|lower|boost|align)\b"
+VERB_START = re.compile(
+    r"^(investigate|analyze|compare|drill|show|trend|summarize|identify|rank|breakdown|benchmark|monitor|reduce|improve|optimi[sz]e|alert|escalate|review|audit|validate|forecast|correlate|segment|isolate|explain|list|filter|focus|deep[- ]?dive)\b",
+    re.I,
+)
+DECLARATIVE = re.compile(
+    r"\b(is|are|has|have|average|avg\.?|hours?|%|tonnes?|usd|\$|shows?|indicates?)\b",
+    re.I,
+)
 
 def _extract_suggestions(text: str, limit: int = 5) -> list[str]:
+    """Pick only imperative, short bullet/numbered items; drop factual statements."""
     if not text:
         return []
     lines = [l.strip() for l in str(text).splitlines() if l.strip()]
-    cands = []
+    # take bulleted/numbered lines first
+    bullets = []
     for l in lines:
         if l.startswith(("-", "*")) or re.match(r"^\d+\.\s+", l):
-            cands.append(l)
-        elif re.match(SUGG_VERB_RX, l, re.I):
-            cands.append(l)
-    cleaned = [re.sub(r"^[-*\d.]+\s+", "", x).strip() for x in cands]
+            bullets.append(re.sub(r"^[-*\d.]+\s+", "", l).strip())
+    # filter to imperative, non-declarative; trim length and trailing periods
     out, seen = [], set()
-    for s in cleaned:
-        k = s.lower()
-        if s and k not in seen:
-            seen.add(k)
-            out.append(s[:120])
-            if len(out) >= limit:
-                break
+    for s in bullets:
+        s2 = s.rstrip(".")
+        if VERB_START.match(s2) and not DECLARATIVE.search(s2):
+            k = s2.lower()
+            if k not in seen:
+                seen.add(k)
+                out.append(s2[:120])
+                if len(out) >= limit:
+                    break
     return out
 
-def run_agentic_query(query: str) -> dict:
-    """Returns {text, suggestions[]}"""
-    result = agent.invoke({"messages": [("user", query)]})
-    # Try to pull the final assistant text robustly
-    text = ""
-    if isinstance(result, dict):
-        if "output" in result and result["output"]:
-            text = result["output"]
-        elif "messages" in result and isinstance(result["messages"], list) and result["messages"]:
-            last = result["messages"][-1]
-            text = getattr(last, "content", "") if not isinstance(last, tuple) else last[1]
-    else:
-        text = str(result)
+VERB_RX = r"^(investigate|analyze|compare|drill|show|trend|summarize|identify|rank|breakdown|benchmark|monitor|reduce|improve|optimi[sz]e|alert|escalate|review|audit|validate|forecast|correlate|segment|isolate|explain|list|filter|focus|deep[- ]?dive)\b"
+BAD_RX = re.compile(r"\b(is|are|has|have|average|avg\.?|hours?|%|tonnes?|usd|\$|shows?|indicates?)\b", re.I)
 
-    suggestions = _extract_suggestions(text, 5)
-    return {"text": text or "(no text)", "suggestions": suggestions}
+def _llm_suggestions(context: dict | str, limit: int = 5) -> list[str]:
+    """Ask the model for 3–5 imperative, short, next-step queries. Returns [] on failure."""
+    try:
+        from insight_engine import get_llm  # reuse your configured Azure LLM
+        llm = get_llm()
+        if not isinstance(context, str):
+            context = json.dumps(context, default=str)
+        prompt = (
+            "You generate NEXT-STEP QUERIES the user can click.\n"
+            f"Return ONLY a JSON array of {limit} short strings.\n"
+            "Rules:\n"
+            "- Each item MUST start with an imperative verb (Investigate/Show/Compare/etc.).\n"
+            "- 4–10 words, no trailing period.\n"
+            "- No plain statements or KPI facts.\n"
+            "- Be specific to Region/BU/metric/time when possible.\n"
+            '- Examples: ["Investigate TIANJIN arrival delays this week", '
+            '"Show WoW trend for BUSAN accuracy", '
+            '"Rank bottom 3 BUs by arrival accuracy", '
+            '"Summarize KPI snapshot for APAC", '
+            '"Drill into berth time drivers in APAC"]\n\n'
+            f"CONTEXT:\n{context}"
+        )
+        raw = llm.invoke(prompt).content
+        items = json.loads(raw)
+        if not isinstance(items, list):
+            return []
+        out, seen = [], set()
+        for s in items:
+            t = str(s).strip().rstrip(".")
+            if not re.match(VERB_RX, t, re.I):
+                continue
+            if BAD_RX.search(t):
+                continue
+            k = t.lower()
+            if k not in seen and 4 <= len(t.split()) <= 10:
+                seen.add(k)
+                out.append(t[:120])
+            if len(out) >= limit:
+                break
+        return out
+    except Exception:
+        return []
+    
+def run_agentic_query(query: str) -> str:
+    """Return the assistant's final text answer (chips built in app.py)."""
+    result = agent.invoke({"messages": [("user", query)]})
+    # robust text extraction
+    if isinstance(result, dict):
+        if result.get("output"):
+            return result["output"]
+        msgs = result.get("messages")
+        if isinstance(msgs, list) and msgs:
+            last = msgs[-1]
+            if isinstance(last, tuple):
+                return last[1]
+            return getattr(last, "content", "") or ""
+    return str(result or "")
