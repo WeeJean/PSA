@@ -40,7 +40,6 @@ export default function App() {
         const text = await res.text();
         throw new Error(text || `HTTP ${res.status}`);
       }
-
       const data = await res.json();
 
       // Normalize the 3 possible shapes
@@ -67,15 +66,15 @@ export default function App() {
         // Fallback: show whatever we got (useful while integrating)
         assistantText = typeof data === "string" ? data : JSON.stringify(data);
       }
-
       setMessages((prev) => [
         ...prev,
         { role: "assistant", text: assistantText },
       ]);
+      console.log(assistantText);
       setSuggestions(nextSuggestions);
       setPowerBIConfig(pbi);
     } catch (err) {
-      console.error(err);
+      console.log(err);
       setMessages((prev) => [
         ...prev,
         { role: "assistant", text: `⚠️ ${err.message}` },
@@ -140,7 +139,7 @@ export default function App() {
       behavior: "smooth",
       block: "start",
     });
-  }, [response]);
+  }, [messages]);
 
   const dotStyle = (i) => ({
     display: "inline-block",
