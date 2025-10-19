@@ -13,7 +13,6 @@ export default function App() {
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{ role: 'user'|'assistant', text: string, suggestions?: string[] }]
   const hasRun = useRef(false);
-  console.log(messages);
   const API_BASE = "http://127.0.0.1:8000";
 
   const DEFAULT_CHIPS = [
