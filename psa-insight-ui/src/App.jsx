@@ -292,8 +292,8 @@ export default function App() {
         }}
       >
         <Split
-          sizes={[70, 30]} // default split
-          minSize={300}
+          sizes={[60, 40]} // default split
+          minSize={0}
           gutterSize={8}
           cursor="col-resize"
           style={{
@@ -335,7 +335,6 @@ export default function App() {
                 display: "flex",
                 flexDirection: "column",
                 width: "100%",
-                maxWidth: "500px",
                 height: "100%",
                 backgroundColor: "#fff",
                 borderRadius: "7px",
