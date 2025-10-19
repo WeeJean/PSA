@@ -7,7 +7,7 @@ from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_core.tools import tool
 
 # bring your data tools in
-from insight_engine import PSA_STRATEGY_GUARDRAIL, summarize_metric, get_basic_info, explain, _df, kpi_snapshot, _norm_filters, _json, anomalies_by_group, get_llm
+from insight_engine import PSA_STRATEGY_GUARDRAIL, summarize_metric, get_basic_info, explain, _df, kpi_snapshot, _norm_filters, _json, anomalies_by_group, get_llm, BU_TO_REGION
 
 load_dotenv()
 
@@ -134,6 +134,10 @@ prompt = ChatPromptTemplate.from_messages([
      "- kpi_snapshot/trend_wow/anomalies_by_group for specific analytics\n"
      "- data_info/distinct_values/peek_column for schema exploration.\n"
      "Be concise and explain in business terms."
+     "If the user names a site like 'Antwerp', 'Singapore', 'Busan', interpret it as BU (column 'BU'), not Region."
+     "When the user says 'in APAC', 'in EMEA', or 'in ME', interpret that as a Region filter (column 'Region'), \
+ not part of the metric name. Metrics always match existing column headers exactly, such as \
+ 'Carbon Abatement (Tonnes)' or 'Bunker Saved(USD)'."
     ),
     # Optional chat history support
     MessagesPlaceholder(variable_name="chat_history", optional=True),
@@ -193,6 +197,9 @@ def suggest_next_queries(
         "Carbon Abatement (Tonnes)",
         "Bunker Saved(USD)",
     ]
+    allowed_bu_list = (sorted(_df["BU"].astype(str).str.strip().str.upper().unique().tolist()) if ("BU" in _df.columns and not _df.empty) else [])
+    allowed_bu_list = [b for b in allowed_bu_list if b in BU_TO_REGION]
+    allowed_regions_list = sorted({BU_TO_REGION[b] for b in allowed_bu_list})
     ban_list = ban_list or []
     ctx = context or {}
     import json as _json
@@ -204,7 +211,13 @@ Return ONLY a JSON array of {limit+3} short strings. No prose, no keys, no markd
 Rules:
 - Start with an imperative verb (Show/Summarize/Rank/Investigate/Compare/List/Peek/Recommend).
 - 4–12 words, no trailing period.
-- Prefer concrete scopes (APAC/EMEA/BU names) when possible.
+- Use concrete scopes when helpful.
+
+IMPORTANT SCOPE RULES (STRICT):
+- BU must be chosen ONLY from: {allowed_bu_list}
+- Region must be chosen ONLY from: {allowed_regions_list}
+- Do NOT invent new BUs or Regions. If a scope isn't in the lists, OMIT it.
+
 - <metric> must be one of:
   {allowed_metrics}
 
