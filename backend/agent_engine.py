@@ -230,7 +230,6 @@ Cover a VARIETY of intents; include at least one from each where sensible:
   • Compare scopes       → “Compare APAC vs EMEA on <metric>”
   • Drivers / drilldown  → “Investigate drivers of <metric> in <scope>”
   • Distinct values      → “List distinct values of BU”
-  • Peek column          → “Peek column <name> (first 8 values)”
   • Prescriptive steps   → “Recommend next 3 actions to improve <metric> in <scope>”
 
 DO NOT repeat or paraphrase the user's current question or any items in DO_NOT_REPEAT.
