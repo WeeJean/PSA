@@ -135,6 +135,9 @@ prompt = ChatPromptTemplate.from_messages([
      "- data_info/distinct_values/peek_column for schema exploration.\n"
      "Be concise and explain in business terms."
      "If the user names a site like 'Antwerp', 'Singapore', 'Busan', interpret it as BU (column 'BU'), not Region."
+     "When the user says 'in APAC', 'in EMEA', or 'in ME', interpret that as a Region filter (column 'Region'), \
+ not part of the metric name. Metrics always match existing column headers exactly, such as \
+ 'Carbon Abatement (Tonnes)' or 'Bunker Saved(USD)'."
     ),
     # Optional chat history support
     MessagesPlaceholder(variable_name="chat_history", optional=True),
