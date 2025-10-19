@@ -11,20 +11,22 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [powerBIConfig, setPowerBIConfig] = useState(null); // optional: if agent returns embed
   const lastMessageRef = useRef(null);
-  const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
-  const [suggestions, setSuggestions] = useState([]); // pipeline next steps
-  const chipRowRef = useRef(null);
-  const [chipRowH, setChipRowH] = useState(40); // reserve space under textarea
+  // const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
+  // const [suggestions, setSuggestions] = useState([]); // pipeline next steps
+  // each assistant message can carry its own suggestions array
+  const [messages, setMessages] = useState([]); // [{ role: 'user'|'assistant', text: string, suggestions?: string[] }]
+  // const chipRowRef = useRef(null);
+  // const [chipRowH, setChipRowH] = useState(40); // reserve space under textarea
   const hasRun = useRef(false);
 
   const API_BASE = "http://127.0.0.1:8000";
 
-  useLayoutEffect(() => {
-    if (chipRowRef.current) {
-      const h = chipRowRef.current.getBoundingClientRect().height || 40;
-      setChipRowH(h);
-    }
-  }, [suggestions]);
+  // useLayoutEffect(() => {
+  //   if (chipRowRef.current) {
+  //     const h = chipRowRef.current.getBoundingClientRect().height || 40;
+  //     setChipRowH(h);
+  //   }
+  // }, [suggestions]);
 
   function extractSuggestionsFromText(s, max = 5) {
     if (!s) return [];
@@ -97,9 +99,8 @@ export default function App() {
 
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", text: assistantText },
+        { role: "assistant", text: assistantText, suggestions: chips },
       ]);
-      setSuggestions(chips);
       if (pbi) setPowerBIConfig(pbi);
     } catch (err) {
       console.error(err);
@@ -209,9 +210,9 @@ export default function App() {
 
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", text: assistantText },
+          { role: "assistant", text: assistantText, suggestions: chips },
         ]);
-        setSuggestions(chips);
+
         if (pbi) setPowerBIConfig(pbi);
       } catch (err) {
         console.error(err);
@@ -269,7 +270,7 @@ export default function App() {
               style={{ backgroundColor: "white", paddingRight: "4px" }}
               width="100px"
             ></img>
-            <h2 style={{ margin: 0, paddingLeft: "3px", color: "black"}}>
+            <h2 style={{ margin: 0, paddingLeft: "3px", color: "black" }}>
               PortSense Dashboard
             </h2>
           </div>
@@ -420,9 +421,9 @@ export default function App() {
                         )}
                       </div>
 
-                      {isBot && isLast && suggestions?.length > 0 && (
+                      {isBot && m.suggestions?.length > 0 && (
                         <SuggestionChips
-                          items={suggestions}
+                          items={m.suggestions}
                           onClick={(s) => {
                             setLoading(true);
                             askLLM(s);
