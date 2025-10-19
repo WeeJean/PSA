@@ -1,92 +1,219 @@
-# agent_engine.py
-import os
+# agent_engine_v2.py
+import os, re
+import json as _json
 from dotenv import load_dotenv
+
 from langchain_openai import AzureChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_core.tools import tool
 
-# bring your data tools in
-from insight_engine import PSA_STRATEGY_GUARDRAIL, summarize_metric, get_basic_info, explain, _df, kpi_snapshot, _norm_filters, _json, anomalies_by_group, get_llm, BU_TO_REGION
+# ==== bring your data tools in (v2, month-based) ====
+from insight_engine import (
+    get_basic_info,
+    kpi_snapshot,
+    summarize_metric,
+    apply_filters,   # used in anomalies tool
+    _df,             # raw df for some tools
+    BU_TO_REGION,
+    get_llm,
+    _col
+)
 
 load_dotenv()
 
+# ---- small helper to parse filters_json safely (kept from v1 behaviour) ----
+def _norm_filters(filters_json: str | None):
+    if not filters_json:
+        return {}
+    try:
+        f = _json.loads(filters_json)
+        if isinstance(f, dict):
+            return f
+    except Exception:
+        pass
+    return {}
+
 # --- Tools ---
-@tool("run_pipeline", return_direct=False)
-def run_pipeline_tool(question: str, filters: dict | None = None) -> dict:
-    """Run the structured pipeline to generate a business explanation."""
-    merged, summary = explain(question, filters)
-    return {"summary": summary, "details": merged}
 
 @tool("data_info", return_direct=False)
 def data_info_tool() -> dict:
     """Basic info about current dataset."""
     return get_basic_info()
 
-@tool("debug_coverage", return_direct=False)
-def debug_coverage_tool(metric: str = "ArrivalAccuracy(FinalBTR)", group: str = "BU") -> dict:
-    """Quick coverage stats by group/week."""
-    import pandas as pd
-    if "Week" not in _df.columns:
-        return {"error": "Week not present in dataframe"}
-    if metric not in _df.columns:
-        return {"error": f"Metric '{metric}' not in columns"}
-    if group not in _df.columns:
-        return {"error": f"Group '{group}' not in columns"}
-
-    d = _df.copy()
-    out = {
-        "overall": {
-            "rows": int(len(d)),
-            "weeks_distinct": int(d["Week"].nunique()),
-            "metric_non_null": int(d[metric].notna().sum()),
-        },
-        "by_group": []
-    }
-    g = d.groupby(group, dropna=False)
-    for k, sub in g:
-        out["by_group"].append({
-            group: None if pd.isna(k) else str(k),
-            "rows": int(len(sub)),
-            "weeks_distinct": int(sub["Week"].nunique()),
-            "metric_non_null": int(sub[metric].notna().sum()),
-        })
-    return out
-
 @tool("kpi_snapshot", return_direct=False)
 def kpi_tool(filters_json: str = "") -> str:
     """
-    Compute KPI snapshot for the current dataset and optional filters.
-    filters_json: JSON string of an include-filter dict, e.g. {"Region":["APAC"],"BU":["SINGAPORE"]}
+    Compute KPI snapshot (month-agnostic aggregates) for the current dataset and optional filters.
+    filters_json: JSON string of include filters, e.g. {"Region":["APAC"],"BU":["SINGAPORE"]}
     Returns JSON string with KPI fields.
     """
     f = _norm_filters(filters_json)
     return _json.dumps(kpi_snapshot(f), default=str)
 
-@tool("trend_wow", return_direct=False)
-def trend_tool(metric: str, filters_json: str = "") -> str:
+@tool("trend_mom", return_direct=False)
+def trend_mom_tool(metric: str, filters_json: str = "") -> str:
     """
-    Compute week-over-week trend for a metric within optional filters.
-    metric: exact column name (e.g., "ArrivalAccuracy(FinalBTR)" or "Berth Time(hours):ATU-ATB")
-    filters_json: JSON string filters.
-    Returns JSON string with latest_week, previous_week, current_mean, previous_mean, delta...
+    Compute month-over-month trend for a metric within optional filters.
+    metric: use canonical metric names (e.g., "ArrivalAccuracy(FinalBTR)", "BunkerSaved(USD)")
+    filters_json: JSON string filters, e.g. {"BU":["SINGAPORE"]}.
+    Returns JSON with latest_month, previous_month, current_mean, previous_mean, delta_percent/pp.
     """
     f = _norm_filters(filters_json)
-    return _json.dumps(summarize_metric(metric, f), default=str)
+    # summarize_metric in v2 defaults to month; pass level="month" to be explicit
+    return _json.dumps(summarize_metric(metric, f, level="month"), default=str)
 
 @tool("anomalies_by_group", return_direct=False)
 def anomalies_tool(metric: str, group_col: str = "BU", filters_json: str = "", top_n: int = 3) -> str:
     """
-    Find highest/lowest groups by z-score on a metric.
-    metric: exact column name
-    group_col: grouping column (default "BU")
-    filters_json: JSON string filters
-    top_n: how many groups to return for each side
-    Returns JSON string with highest/lowest arrays.
+    Find highest/lowest groups by z-score on a metric (mean per group), using current dataset.
+    Resolves canonical names via engine header map.
     """
+    import pandas as pd
     f = _norm_filters(filters_json)
-    out = anomalies_by_group(metric, group_col=group_col, top_n=int(top_n), filters=f)
-    return _json.dumps(out, default=str)
+
+    d = apply_filters(f)
+
+    # Resolve canonical → actual column names
+    mcol = _col(metric) or metric
+    gcol = _col(group_col) or group_col
+
+    if gcol not in d.columns:
+        return _json.dumps({"error": f"Group column '{group_col}' not found (resolved='{gcol}').",
+                            "columns": list(d.columns)})
+
+    if mcol not in d.columns:
+        return _json.dumps({"error": f"Metric '{metric}' not found (resolved='{mcol}').",
+                            "columns": list(d.columns)})
+
+    vals = pd.to_numeric(d[mcol], errors="coerce")
+    d = d.assign(_metric=vals).dropna(subset=["_metric"])
+    if d.empty:
+        return _json.dumps({"error": f"No numeric values for metric '{metric}' after coercion."})
+
+    by_grp = d.groupby(gcol)["_metric"].mean().reset_index()
+    mu, sd = by_grp["_metric"].mean(), by_grp["_metric"].std(ddof=0)
+    by_grp["z"] = 0.0 if (pd.isna(sd) or sd == 0) else (by_grp["_metric"] - mu) / sd
+
+    highest = by_grp.nlargest(int(top_n), "z").to_dict(orient="records")
+    lowest  = by_grp.nsmallest(int(top_n), "z").to_dict(orient="records")
+
+    return _json.dumps({
+        "metric": metric,
+        "metric_resolved": mcol,
+        "group_col": group_col,
+        "group_col_resolved": gcol,
+        "highest": highest,
+        "lowest": lowest,
+        "filters_applied": f or {},
+    }, default=str)
+
+@tool("metric_value", return_direct=False)
+def metric_value_tool(
+    metric: str,
+    filters_json: str = "",
+    month: str | None = None,     # e.g. "2025-09", "September", "Sep 2025", "Sep"
+    agg: str = "auto",            # "auto" | "sum" | "mean"
+) -> str:
+    """
+    Return a single metric value for an optional month and filters.
+    - month accepts "YYYY-MM", "Sep 2025", "September", or "Sep" (chooses most recent if year omitted)
+    - agg: "sum" or "mean"; "auto" = sum for Bunker/Carbon, mean for others (ArrivalAccuracy% handled)
+    """
+    import calendar
+    import pandas as pd
+    f = _norm_filters(filters_json)
+
+    d = apply_filters(f)
+    tkey = "MonthKey"
+    if tkey not in d.columns:
+        return _json.dumps({"error": "No 'MonthKey' available in dataset."})
+
+    # Resolve metric
+    mcol = _col(metric) or metric
+    if mcol not in d.columns:
+        return _json.dumps({"error": f"Metric '{metric}' not found (resolved='{mcol}').",
+                            "columns": list(d.columns)})
+
+    # Determine aggregation
+    metric_l = (metric or "").lower()
+    if agg == "auto":
+        if "bunker" in metric_l or "carbon" in metric_l:
+            agg = "sum"
+        else:
+            agg = "mean"
+
+    # Optional month selection
+    selected_month = None
+    dd = d.copy()
+    if month:
+        m = month.strip()
+        # direct YYYY-MM
+        if re.match(r"^\d{4}-\d{2}$", m):
+            dd = dd[dd[tkey] == m]
+            selected_month = m
+        else:
+            # parse month names, optionally with year
+            # examples: "September", "Sep", "Sep 2025"
+            parts = m.split()
+            month_num = None
+            year = None
+            # try month name
+            for i in range(1,13):
+                if calendar.month_name[i].lower().startswith(parts[0].lower()) or \
+                   calendar.month_abbr[i].lower() == parts[0].lower():
+                    month_num = i
+                    break
+            if len(parts) >= 2 and re.match(r"^\d{4}$", parts[1]):
+                year = int(parts[1])
+
+            if month_num is None:
+                return _json.dumps({"error": f"Could not parse month '{month}'."})
+
+            mm = f"{month_num:02d}"
+            if year:
+                key = f"{year}-{mm}"
+                dd = dd[dd[tkey] == key]
+                selected_month = key
+            else:
+                # no year given -> pick the most recent MonthKey that endswith -MM
+                pool = dd[dd[tkey].str.endswith(f"-{mm}", na=False)][tkey].dropna().unique().tolist()
+                pool = sorted(pool)
+                if not pool:
+                    return _json.dumps({"error": f"No data for month '{month}'."})
+                selected_month = pool[-1]
+                dd = dd[dd[tkey] == selected_month]
+
+    vals = pd.to_numeric(dd[mcol], errors="coerce").dropna()
+    if vals.empty:
+        return _json.dumps({"error": f"No numeric values for '{metric}' with given filters/month.",
+                            "resolved_metric": mcol, "selected_month": selected_month, "filters": f})
+
+    # ArrivalAccuracy reported as percent (mean * 100)
+    if (_col("ArrivalAccuracy(FinalBTR)") == mcol) or (metric == "ArrivalAccuracy(FinalBTR)"):
+        value = float(vals.mean()) * 100.0
+        return _json.dumps({
+            "metric": metric,
+            "metric_resolved": mcol,
+            "aggregation": "mean_as_percent",
+            "value": round(value, 2),
+            "month": selected_month,
+            "filters_applied": f or {},
+        })
+
+    if agg == "sum":
+        value = float(vals.sum())
+    else:
+        value = float(vals.mean())
+
+    return _json.dumps({
+        "metric": metric,
+        "metric_resolved": mcol,
+        "aggregation": agg,
+        "value": round(value, 3),
+        "month": selected_month,
+        "filters_applied": f or {},
+    })
 
 @tool("distinct_values", return_direct=False)
 def distinct_tool(column: str) -> str:
@@ -113,9 +240,9 @@ def peek_tool(column: str, n: int = 8) -> str:
         "samples": s.astype(str).tolist()
     })
 
-tools = [run_pipeline_tool, data_info_tool, debug_coverage_tool, kpi_tool, trend_tool, anomalies_tool, distinct_tool, peek_tool]
+tools = [data_info_tool, kpi_tool, trend_mom_tool, anomalies_tool, distinct_tool, peek_tool, metric_value_tool]
 
-# --- LLM ---
+# --- LLM (same as before) ---
 llm = AzureChatOpenAI(
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
@@ -125,27 +252,22 @@ llm = AzureChatOpenAI(
 )
 
 # --- Prompt ---
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-
 prompt = ChatPromptTemplate.from_messages([
     ("system",
-     "You are PSA’s data analytics assistant. Use tools when helpful:\n"
-     "- run_pipeline(question, filters?) for structured KPI/Trend/Anomalies + actions\n"
-     "- kpi_snapshot/trend_wow/anomalies_by_group for specific analytics\n"
-     "- data_info/distinct_values/peek_column for schema exploration.\n"
-     "Be concise and explain in business terms."
-     "If the user names a site like 'Antwerp', 'Singapore', 'Busan', interpret it as BU (column 'BU'), not Region."
-     "When the user says 'in APAC', 'in EMEA', or 'in ME', interpret that as a Region filter (column 'Region'), \
- not part of the metric name. Metrics always match existing column headers exactly, such as \
- 'Carbon Abatement (Tonnes)' or 'Bunker Saved(USD)'."
+    "You are PSA’s data analytics assistant. Use tools when helpful:\n"
+    "- kpi_snapshot for KPI aggregates within optional filters\n"
+    "- trend_mom for month-over-month trends on a metric\n"
+    "- anomalies_by_group to surface outliers by BU/Region\n"
+    "- metric_value to return a single metric value for a BU/Region and month (YYYY-MM or month name)\n"  # ← ADD THIS LINE
+    "- data_info/distinct_values/peek_column for schema exploration.\n"
+    "Be concise and explain in business terms.\n"
+    "If the user names a site (Antwerp, Singapore, Busan), interpret it as BU (column 'BU').\n"
+    "If the user says 'in APAC', 'in EMEA', or 'in ME', interpret that as a Region filter (column 'Region').\n"
+    "Metrics must match canonical names: 'ArrivalAccuracy(FinalBTR)', 'BerthTime(hours):ATU-ATB', "
+    "'AssuredPortTimeAchieved(%)', 'CarbonAbatement(Tonnes)', 'BunkerSaved(USD)'.\n"
     ),
-    # Optional chat history support
     MessagesPlaceholder(variable_name="chat_history", optional=True),
-
-    # The current user input
     ("human", "{input}"),
-
-    # REQUIRED by create_openai_tools_agent:
     MessagesPlaceholder(variable_name="agent_scratchpad"),
 ])
 
@@ -153,8 +275,7 @@ prompt = ChatPromptTemplate.from_messages([
 agent_runnable = create_openai_tools_agent(llm, tools, prompt)
 agent = AgentExecutor(agent=agent_runnable, tools=tools, verbose=False)
 
-# --- Suggestion generator: produce ONLY prompts the agent can run with tools ---
-# --- helpers for dedupe / similarity ---
+# --- Suggestion generator (kept, but scoped to available BUs/Regions & metrics) ---
 def _normalize_prompt_text(s: str) -> list[str]:
     import re
     stop = {"the","a","an","for","of","to","in","on","by","with","this","that","these","those","and","or"}
@@ -164,7 +285,7 @@ def _normalize_prompt_text(s: str) -> list[str]:
 
 def _too_similar(a: str, b: str, thresh: float = 0.6) -> bool:
     A, B = set(_normalize_prompt_text(a)), set(_normalize_prompt_text(b))
-    if not A or not B: 
+    if not A or not B:
         return False
     inter = len(A & B); union = len(A | B)
     return (inter / union) >= thresh
@@ -174,118 +295,173 @@ def suggest_next_queries(
     limit: int = 6,
     last_question: str | None = None,
     ban_list: list[str] | None = None,
+    ban_metric_list: list[str] | None = None,   # ← NEW: allow banning specific metrics (e.g., ArrivalAccuracy)
 ) -> list[str]:
-    """
-    Produce diversified next-step queries. Buckets:
-      - KPI snapshot
-      - Trend WoW (or MoM)
-      - Rank best performers
-      - Rank worst performers
-      - Anomalies by group
-      - Compare 2 scopes
-      - Drill into drivers
-      - Distinct values (scoping help)
-      - Peek column
-      - Prescriptive actions (steps to take)
+    import json as _json
+    import json, re, random
+    from insight_engine import _df, _col  # ensure we see latest data/schema
 
-    Returns short imperatives (4–12 words), no trailing period.
-    """
-    allowed_metrics = [
-        "ArrivalAccuracy(FinalBTR)",
-        "Berth Time(hours):ATU-ATB",
-        "AssuredPortTimeAchieved(%)",
-        "Carbon Abatement (Tonnes)",
-        "Bunker Saved(USD)",
-    ]
-    allowed_bu_list = (sorted(_df["BU"].astype(str).str.strip().str.upper().unique().tolist()) if ("BU" in _df.columns and not _df.empty) else [])
+    # 1) Build allowed BUs/Regions from DATA
+    from insight_engine import BU_TO_REGION
+    allowed_bu_list = (
+        sorted(_df["BU"].astype(str).str.strip().str.upper().unique().tolist())
+        if ("BU" in _df.columns and not _df.empty)
+        else []
+    )
     allowed_bu_list = [b for b in allowed_bu_list if b in BU_TO_REGION]
     allowed_regions_list = sorted({BU_TO_REGION[b] for b in allowed_bu_list})
+
+    # 2) Build allowed metrics from DATA (canonical names resolved to actual; filter to numeric cols)
+    # If you prefer a strict static list, replace this block with your explicit metric names.
+    numeric_like = []
+    for c in _df.columns:
+        if c.startswith("Unnamed"):
+            continue
+        if str(_df[c].dtype) in ("int64", "float64"):
+            numeric_like.append(c)
+
+    # Map actual -> canonical label shown to the LLM. You can customize pretty labels here.
+    # Try to keep these 1:1 with your engine’s canonical keys.
+    candidates = {
+        "BunkerSaved(USD)":          _col("BunkerSaved(USD)")          or "BunkerSaved(USD)",
+        "CarbonAbatement(Tonnes)":   _col("CarbonAbatement(Tonnes)")   or "CarbonAbatement(Tonnes)",
+        "BerthTime(hours):ATU-ATB":  _col("BerthTime(hours):ATU-ATB")  or "BerthTime(hours):ATU-ATB",
+        "AssuredPortTimeAchieved(%)":_col("AssuredPortTimeAchieved(%)")or "AssuredPortTimeAchieved(%)",
+        "ArrivalAccuracy(FinalBTR)": _col("ArrivalAccuracy(FinalBTR)") or "ArrivalAccuracy(FinalBTR)",
+    }
+    allowed_metrics = [k for k, actual in candidates.items() if actual in numeric_like]
+
+    # Optionally: temporarily demote or ban ArrivalAccuracy for demo
+    ban_metric_list = set(ban_metric_list or [])
+    # Example: ban_metric_list.add("ArrivalAccuracy(FinalBTR)")  # uncomment if you want to fully suppress it
+
+    # If everything got filtered out (shouldn’t happen), fall back to the non-arrival ones:
+    if not allowed_metrics:
+        allowed_metrics = [
+            "BunkerSaved(USD)",
+            "CarbonAbatement(Tonnes)",
+            "BerthTime(hours):ATU-ATB",
+            "AssuredPortTimeAchieved(%)",
+            "ArrivalAccuracy(FinalBTR)",
+        ]
+
+    # 3) Craft prompt that FORCES metric diversity
     ban_list = ban_list or []
     ctx = context or {}
-    import json as _json
     ctx_text = _json.dumps(ctx, default=str)[:3000]
 
-    prompt = f"""You produce NEXT-STEP QUERIES the PSA analytics copilot can run or answer.
-Return ONLY a JSON array of {limit+3} short strings. No prose, no keys, no markdown.
+    # Make a small rule-string like "Do not use: ArrivalAccuracy(FinalBTR)"
+    disallow_clause = ""
+    if ban_metric_list:
+        disallow_clause = "Do NOT include these metrics: " + ", ".join(sorted(ban_metric_list)) + "\n"
 
-Rules:
-- Start with an imperative verb (Show/Summarize/Rank/Investigate/Compare/List/Peek/Recommend).
-- 4–12 words, no trailing period.
-- Use concrete scopes when helpful.
+    prompt = f"""
+    You are generating NEXT-STEP QUERIES that the PSA analytics copilot can actually answer.
 
-IMPORTANT SCOPE RULES (STRICT):
-- BU must be chosen ONLY from: {allowed_bu_list}
-- Region must be chosen ONLY from: {allowed_regions_list}
-- Do NOT invent new BUs or Regions. If a scope isn't in the lists, OMIT it.
+    Return ONLY a JSON array of {limit+3} short strings (no prose, no markdown, no keys).
 
-- <metric> must be one of:
-  {allowed_metrics}
+    ### Rules
+    - Start with an action verb (Show, Summarize, Rank, Compare, Investigate, List, Recommend).
+    - Keep them short (4–12 words, no trailing periods).
+    - Use ONLY valid scopes and metrics listed below.
+    - Use a variety of metrics and regions — do not repeat the same metric or region too often.
+    - If unsure which region or BU to use, vary across several (e.g. Singapore, Antwerp, Busan, Dammam, etc.)
+    - Avoid generic or unanswerable prompts (e.g. “delay causes” or “reasons for low performance”).
+    - Avoid always focusing on APAC or Arrival Accuracy.
+    - Prefer relevant and diverse KPIs.
 
-Cover a VARIETY of intents; include at least one from each where sensible:
-  • KPI snapshot         → “Summarize KPI snapshot for <scope>”
-  • Trend WoW / MoM      → “Show WoW trend for <metric> in <scope>”
-  • Rank best            → “Rank best 3 BUs by <metric> in <scope>”
-  • Rank worst           → “Rank worst 3 BUs by <metric> in <scope>”
-  • Anomalies            → “Find anomalies by BU for <metric> in <scope>”
-  • Compare scopes       → “Compare APAC vs EMEA on <metric>”
-  • Drivers / drilldown  → “Investigate drivers of <metric> in <scope>”
-  • Distinct values      → “List distinct values of BU”
-  • Prescriptive steps   → “Recommend next 3 actions to improve <metric> in <scope>”
+    ### Valid metrics
+    {allowed_metrics}
 
-DO NOT repeat or paraphrase the user's current question or any items in DO_NOT_REPEAT.
+    ### Valid BUs
+    {allowed_bu_list}
 
-NETWORK STRATEGY:
-{PSA_STRATEGY_GUARDRAIL}
-Bias queries toward cross-BU/region comparisons, transshipment connectivity, schedule integrity,
-and actions that improve end-to-end network performance.
+    ### Valid Regions
+    {allowed_regions_list}
 
-CONTEXT:
-{ctx_text}
+    ### Example types
+    - Summarize KPI snapshot for a BU or Region
+    - Show month-over-month trend for a metric in a BU
+    - Rank best or worst 3 BUs by a metric
+    - Compare two regions or ports on a KPI
+    - Investigate anomalies or performance drivers for a metric
+    - Recommend next 3 actions to improve a metric
 
-CURRENT_QUESTION:
-{(last_question or "")[:300]}
+    ### Context
+    {_json.dumps(context, default=str)[:1000]}
 
-DO_NOT_REPEAT:
-{_json.dumps(ban_list[:10], ensure_ascii=False)}
-"""
+    ### Current question
+    {(last_question or "")[:300]}
+
+    ### Do not repeat
+    {_json.dumps(ban_list[:10], ensure_ascii=False)}
+    """
+
 
     llm = get_llm()
     raw = llm.invoke(prompt).content.strip()
 
-    # Parse & validate
-    import json, re
+    # 4) Parse & validate
     try:
         items = json.loads(raw)
-        if not isinstance(items, list): raise ValueError("not list")
+        if not isinstance(items, list):
+            raise ValueError("not list")
     except Exception:
         items = []
 
     verb = re.compile(r"^(Show|Summarize|Compare|Rank|Investigate|List|Peek|Recommend)\b", re.I)
-    # broader intent set
     intent = re.compile(
-        r"(KPI|snapshot|WoW|trend|week|month|MoM|rank|best|worst|top|bottom|"
+        r"(KPI|snapshot|trend|month|MoM|rank|best|worst|top|bottom|"
         r"anomal|outlier|compare|vs|drivers?|drill|distinct|unique|values?|list|"
         r"peek|sample|column|actions?|steps?|improve)",
         re.I,
     )
 
-    curated, seen = [], set()
+    # 5) Post-filter to enforce metric diversity and ban list
+    # Detect which canonical metric appears inside a suggestion by substring match.
+    def detect_metric(s: str) -> str | None:
+        s_low = s.lower()
+        for m in allowed_metrics:
+            if m.lower() in s_low:
+                return m
+        return None
+
+    curated, seen_text, seen_metric = [], set(), set()
     for s in items:
-        if not isinstance(s, str): continue
+        if not isinstance(s, str):
+            continue
         t = s.strip().rstrip(".")
-        if not t or not verb.search(t) or not intent.search(t): continue
-        if last_question and _too_similar(t, last_question): continue
-        if any(_too_similar(t, b) for b in ban_list): continue
+        if not t or not verb.search(t) or not intent.search(t):
+            continue
+        if last_question and _too_similar(t, last_question):
+            continue
+        if any(_too_similar(t, b) for b in ban_list):
+            continue
+
+        m = detect_metric(t)
+        # Enforce "one metric max once"
+        if (m in ban_metric_list) or (m in seen_metric):
+            continue
+        # If it mentions NO metric at all, let a small number through (e.g., distinct values / peek column)
+        if (m is None) and (sum(1 for x in curated if detect_metric(x) is None) >= 2):
+            continue
+
         k = t.lower()
-        if k in seen: continue
-        seen.add(k)
+        if k in seen_text:
+            continue
+        seen_text.add(k)
+        if m:
+            seen_metric.add(m)
         curated.append(t)
 
-    # Diversify by bucket (one each, in order of usefulness)
+        if len(curated) >= (limit * 2):  # gather a bit more; we’ll trim
+            break
+
+    # 6) Ensure we have at least one for several buckets (light touch)
     def bucket_key(t: str) -> str:
         tl = t.lower()
         if "kpi" in tl or "snapshot" in tl: return "kpi"
-        if "wow" in tl or "trend" in tl or "month" in tl or "mom" in tl: return "trend"
+        if "trend" in tl or "month" in tl or "mom" in tl: return "trend"
         if "rank" in tl and ("best" in tl or "top" in tl): return "best"
         if "rank" in tl and ("worst" in tl or "bottom" in tl): return "worst"
         if "anomal" in tl or "outlier" in tl: return "anom"
@@ -296,27 +472,35 @@ DO_NOT_REPEAT:
         if "action" in tl or "steps" in tl or "improve" in tl or "recommend" in tl: return "actions"
         return "other"
 
-    buckets = {k: [] for k in ["kpi","trend","best","worst","anom","compare","drivers","distinct","peek","actions"]}
+    buckets = {k: [] for k in ["kpi","trend","best","worst","anom","compare","drivers","distinct","peek","actions","other"]}
     for t in curated:
-        k = bucket_key(t)
-        if k in buckets and not buckets[k]:
-            buckets[k] = [t]
+        buckets[bucket_key(t)].append(t)
 
-    diversified = []
-    order = ["kpi","trend","best","worst","anom","compare","drivers","distinct","peek","actions"]
-    for k in order:
-        diversified += buckets[k]
-        if len(diversified) >= limit: break
+    # Interleave buckets to avoid clustering on one intent
+    order = ["kpi","trend","compare","best","worst","anom","drivers","distinct","peek","actions","other"]
+    out = []
+    i = 0
+    while len(out) < limit and any(buckets.values()):
+        b = order[i % len(order)]
+        if buckets[b]:
+            out.append(buckets[b].pop(0))
+        i += 1
 
-    # Fallback if LLM gave nothing useful
-    if not diversified:
-        diversified = [
-            "Summarize KPI snapshot for APAC",
-            "Show WoW trend for ArrivalAccuracy(FinalBTR) in APAC",
-            "Rank worst 3 BUs by ArrivalAccuracy(FinalBTR) in APAC",
-            "Recommend next 3 actions to improve ArrivalAccuracy(FinalBTR) in APAC",
-        ]
-    return diversified[:limit]
+    # Fallback if LLM didn’t cooperate
+    if not out:
+        # Build deterministic diversified fallbacks that **do not** overuse ArrivalAccuracy
+        non_arrival = [m for m in allowed_metrics if m != "ArrivalAccuracy(FinalBTR)"]
+        pick = (non_arrival or allowed_metrics)[:3]
+        out = [
+            f"Summarize KPI snapshot for APAC",
+            f"Show MoM trend for {pick[0]} in APAC",
+            f"Compare SINGAPORE vs BUSAN on {pick[1] if len(pick)>1 else pick[0]}",
+            f"Rank worst 3 BUs by {pick[2] if len(pick)>2 else pick[0]} in APAC",
+            f"Investigate drivers of {pick[0]} in ANTWERP",
+            f"List distinct values of BU",
+        ][:limit]
+
+    return out[:limit]
 
 
 
