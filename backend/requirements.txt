@@ -30,7 +30,7 @@ langchain-text-splitters==0.3.0
 langgraph==0.2.32
 langgraph-checkpoint==2.1.2
 langgraph-prebuilt==1.0.0
-langgraph-sdk==0.2.12
+langgraph-sdk==0.2.9
 langsmith==0.1.147
 MarkupSafe==3.0.3
 multidict==6.7.0
