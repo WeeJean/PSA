@@ -334,7 +334,7 @@ export default function App() {
           </div>
 
           <span style={{ color: "#666" }}>
-            Monitor port performance and get instant insights from Bomen
+            Monitor port performance and get instant insights from Boman
           </span>
         </div>
       </header>
