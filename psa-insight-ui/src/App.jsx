@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
-=======
-import { useState, useEffect, useRef } from "react";
->>>>>>> e859688299f25624484da3bd65f96d815f173094
 import Split from "react-split";
 import { Input, Button, Card, Typography, Space } from "antd";
 import PowerBIReport from "./PowerBIReport";
@@ -17,12 +13,9 @@ export default function App() {
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
   const [suggestions, setSuggestions] = useState([]); // pipeline next steps
-<<<<<<< HEAD
   const chipRowRef = useRef(null);
   const [chipRowH, setChipRowH] = useState(40); // reserve space under textarea
-=======
   const hasRun = useRef(false);
->>>>>>> e859688299f25624484da3bd65f96d815f173094
 
   const API_BASE = "http://127.0.0.1:8000";
 
@@ -122,12 +115,7 @@ export default function App() {
     }
   };
 
-<<<<<<< HEAD
   const SuggestionChips = ({ items, onClick }) => {
-=======
-  console.log(messages);
-  const SuggestionChips = ({ items }) => {
->>>>>>> e859688299f25624484da3bd65f96d815f173094
     if (!items?.length) return null;
 
     return (
@@ -196,40 +184,25 @@ export default function App() {
         let nextSuggestions = [];
         let pbi = null;
         const data = await res.json();
-        if (data?.mode === "pipeline") {
-          // {mode:"pipeline", text, details}
-          assistantText = data.text ?? "";
-          nextSuggestions =
-            data.details?.suggestions || data.details?.next_steps || [];
-          pbi = data.details?.powerBI ?? null;
-        } else if (data?.mode === "agent") {
-          // {mode:"agent", text}
-          assistantText = data.text ?? "";
-          // agent mode typically has no suggestions
-        } else if (data?.answer_type) {
-          // Envelope: {answer_type, message, payload}
-          assistantText = data.message ?? "";
-          nextSuggestions = data.payload?.suggestions ?? [];
-          pbi = data.payload?.powerBI ?? null;
+        // Reuse the same handlers by simulating a single “bot” message:
+        if (data.mode === "pipeline") {
+          const pretty = data.details
+            ? `\n\n\`\`\`json\n${JSON.stringify(data.details, null, 2)}\n\`\`\``
+            : "";
+          setMessages((prev) => [...prev, `${data.text || ""}${pretty}`]);
+        } else if (data.mode === "agent") {
+          setMessages((prev) => [...prev, data.text || "(no text)"]);
+        } else if (data.answer_type) {
+          // simple render path for initial question
+          setMessages((prev) => [...prev, data.message || "(no text)"]);
         } else {
-          // Fallback: show whatever we got (useful while integrating)
-          assistantText =
-            typeof data === "string" ? data : JSON.stringify(data);
+          setMessages((prev) => [
+            ...prev,
+            data.response || data.error || "No response received.",
+          ]);
         }
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", text: assistantText },
-        ]);
-        setSuggestions(nextSuggestions);
-        setPowerBIConfig(pbi);
-      } catch (err) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", text: `⚠️ ${err.message}` },
-        ]);
-      } finally {
-        setLoading(false);
-        setQuery(""); // clear AFTER sending
+      } catch (e) {
+        setMessages((prev) => [...prev, "❌ Error connecting to backend."]);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -240,15 +213,7 @@ export default function App() {
       behavior: "smooth",
       block: "start",
     });
-  }, [response]);
-
-  const dotStyle = (i) => ({
-    display: "inline-block",
-    animation: `bounce 1.4s infinite ease-in-out ${i * 0.2}s`,
-    fontSize: "20px",
-    lineHeight: "0",
-    padding: "0 4px",
-  });
+  }, [messages]);
 
   return (
     <div
@@ -277,19 +242,7 @@ export default function App() {
         }}
       >
         <div style={{ textAlign: "center" }}>
-          <div
-            style={{ display: "flex", width: "100%", justifyContent: "center" }}
-          >
-            <img
-              src="./BoMen.png"
-              style={{ backgroundColor: "white", paddingRight: "4px" }}
-              width="30px"
-            ></img>
-            <h2 style={{ margin: 0, color: "black" }}>
-              PSA PortSense Dashboard
-            </h2>
-          </div>
-
+          <h2 style={{ margin: 0, color: "black" }}>PSA PortSense Dashboard</h2>
           <span style={{ color: "#666" }}>
             Monitor port performance and get instant insights from your Copilot.
           </span>
@@ -308,7 +261,7 @@ export default function App() {
         <Split
           sizes={[70, 30]} // default split
           minSize={300}
-          gutterSize={5}
+          gutterSize={8}
           cursor="col-resize"
           style={{
             display: "flex",
@@ -349,6 +302,7 @@ export default function App() {
                 display: "flex",
                 flexDirection: "column",
                 width: "100%",
+                maxWidth: "500px",
                 height: "100%",
                 backgroundColor: "#fff",
                 borderRadius: "7px",
@@ -410,8 +364,8 @@ export default function App() {
                         alignSelf: isBot ? "flex-start" : "flex-end",
                         backgroundColor: isBot ? "#f0f0f0" : "#1890ff",
                         color: isBot ? "#000" : "#fff",
-                        padding: "0.75rem 0.9rem",
-                        borderRadius: 12,
+                        padding: "0.5rem 0.75rem",
+                        borderRadius: "12px",
                         maxWidth: "80%",
                         textAlign: "left",
                         marginBottom: 8,
@@ -445,26 +399,68 @@ export default function App() {
                     </div>
                   );
                 })}
-
                 {loading && (
-                  <div
-                    style={{
-                      alignSelf: "flex-start",
-                      backgroundColor: "#f0f0f0",
-                      color: "#000",
-                      padding: "0.5rem 0.75rem",
-                      borderRadius: "12px",
-                      maxWidth: "30px",
-                      display: "flex",
-                      gap: "3px",
-                      justifyContent: "center",
-                      marginBottom: "0.25rem",
-                    }}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 200 200"
+                    width="50"
+                    height="50"
                   >
-                    <span style={dotStyle(0)}>•</span>
-                    <span style={dotStyle(1)}>•</span>
-                    <span style={dotStyle(2)}>•</span>
-                  </div>
+                    <circle
+                      fill="%23130208"
+                      stroke="%23130208"
+                      stroke-width="15"
+                      r="15"
+                      cx="40"
+                      cy="65"
+                    >
+                      <animate
+                        attributeName="cy"
+                        calcMode="spline"
+                        dur="2"
+                        values="65;135;65;"
+                        keySplines=".5 0 .5 1;.5 0 .5 1"
+                        repeatCount="indefinite"
+                        begin="-.4"
+                      ></animate>
+                    </circle>
+                    <circle
+                      fill="%23130208"
+                      stroke="%23130208"
+                      stroke-width="15"
+                      r="15"
+                      cx="100"
+                      cy="65"
+                    >
+                      <animate
+                        attributeName="cy"
+                        calcMode="spline"
+                        dur="2"
+                        values="65;135;65;"
+                        keySplines=".5 0 .5 1;.5 0 .5 1"
+                        repeatCount="indefinite"
+                        begin="-.2"
+                      ></animate>
+                    </circle>
+                    <circle
+                      fill="%23130208"
+                      stroke="%23130208"
+                      stroke-width="15"
+                      r="15"
+                      cx="160"
+                      cy="65"
+                    >
+                      <animate
+                        attributeName="cy"
+                        calcMode="spline"
+                        dur="2"
+                        values="65;135;65;"
+                        keySplines=".5 0 .5 1;.5 0 .5 1"
+                        repeatCount="indefinite"
+                        begin="0"
+                      ></animate>
+                    </circle>
+                  </svg>
                 )}
               </div>
 
