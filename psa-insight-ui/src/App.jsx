@@ -13,7 +13,6 @@ export default function App() {
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{ role: 'user'|'assistant', text: string, suggestions?: string[] }]
   const hasRun = useRef(false);
-  console.log(loading);
   const API_BASE = "http://127.0.0.1:8000";
 
   const DEFAULT_CHIPS = [
@@ -106,6 +105,7 @@ export default function App() {
     setMessages((prev) => [...prev, { role: "user", text: q }]);
     setLoading(true);
     setTimeout(() => {}, 5000);
+    setQuery("");
 
     try {
       const lastChips = getLastAssistantChips(messages);
@@ -165,7 +165,6 @@ export default function App() {
       ]);
     } finally {
       setLoading(false);
-      setQuery(""); // clear AFTER sending
     }
   };
 
@@ -285,7 +284,6 @@ export default function App() {
         ]);
       } finally {
         setLoading(false);
-        setQuery(""); // clear AFTER sending
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -453,7 +451,7 @@ export default function App() {
                   return (
                     <div
                       key={idx}
-                      ref={isLast ? lastMessageRef : null}
+                      ref={isLast && !loading ? lastMessageRef : null}
                       style={{
                         alignSelf: isBot ? "flex-start" : "flex-end",
                         backgroundColor: isBot ? "#f0f0f0" : "#1890ff",
@@ -496,67 +494,69 @@ export default function App() {
                   );
                 })}
                 {loading && (
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 200 200"
-                    width="50"
-                    height="50"
-                  >
-                    <circle
-                      fill="%23130208"
-                      stroke="%23130208"
-                      stroke-width="15"
-                      r="15"
-                      cx="40"
-                      cy="65"
+                  <div ref={lastMessageRef}>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 200 200"
+                      width="50"
+                      height="50"
                     >
-                      <animate
-                        attributeName="cy"
-                        calcMode="spline"
-                        dur="2"
-                        values="65;135;65;"
-                        keySplines=".5 0 .5 1;.5 0 .5 1"
-                        repeatCount="indefinite"
-                        begin="-.4"
-                      ></animate>
-                    </circle>
-                    <circle
-                      fill="%23130208"
-                      stroke="%23130208"
-                      stroke-width="15"
-                      r="15"
-                      cx="100"
-                      cy="65"
-                    >
-                      <animate
-                        attributeName="cy"
-                        calcMode="spline"
-                        dur="2"
-                        values="65;135;65;"
-                        keySplines=".5 0 .5 1;.5 0 .5 1"
-                        repeatCount="indefinite"
-                        begin="-.2"
-                      ></animate>
-                    </circle>
-                    <circle
-                      fill="%23130208"
-                      stroke="%23130208"
-                      stroke-width="15"
-                      r="15"
-                      cx="160"
-                      cy="65"
-                    >
-                      <animate
-                        attributeName="cy"
-                        calcMode="spline"
-                        dur="2"
-                        values="65;135;65;"
-                        keySplines=".5 0 .5 1;.5 0 .5 1"
-                        repeatCount="indefinite"
-                        begin="0"
-                      ></animate>
-                    </circle>
-                  </svg>
+                      <circle
+                        fill="%23130208"
+                        stroke="%23130208"
+                        stroke-width="15"
+                        r="15"
+                        cx="40"
+                        cy="65"
+                      >
+                        <animate
+                          attributeName="cy"
+                          calcMode="spline"
+                          dur="2"
+                          values="65;135;65;"
+                          keySplines=".5 0 .5 1;.5 0 .5 1"
+                          repeatCount="indefinite"
+                          begin="-.4"
+                        ></animate>
+                      </circle>
+                      <circle
+                        fill="%23130208"
+                        stroke="%23130208"
+                        stroke-width="15"
+                        r="15"
+                        cx="100"
+                        cy="65"
+                      >
+                        <animate
+                          attributeName="cy"
+                          calcMode="spline"
+                          dur="2"
+                          values="65;135;65;"
+                          keySplines=".5 0 .5 1;.5 0 .5 1"
+                          repeatCount="indefinite"
+                          begin="-.2"
+                        ></animate>
+                      </circle>
+                      <circle
+                        fill="%23130208"
+                        stroke="%23130208"
+                        stroke-width="15"
+                        r="15"
+                        cx="160"
+                        cy="65"
+                      >
+                        <animate
+                          attributeName="cy"
+                          calcMode="spline"
+                          dur="2"
+                          values="65;135;65;"
+                          keySplines=".5 0 .5 1;.5 0 .5 1"
+                          repeatCount="indefinite"
+                          begin="0"
+                        ></animate>
+                      </circle>
+                    </svg>
+                  </div>
                 )}
               </div>
 
