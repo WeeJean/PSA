@@ -11,7 +11,7 @@ const { Text } = Typography;
 export default function App() {
   const [query, setQuery] = useState("");
   const [response, setResponse] = useState([]); // array of strings (alternating user/bot)
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [powerBIConfig, setPowerBIConfig] = useState(null); // optional: if agent returns embed
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
@@ -70,11 +70,9 @@ export default function App() {
         ...prev,
         { role: "assistant", text: assistantText },
       ]);
-      console.log(assistantText);
       setSuggestions(nextSuggestions);
       setPowerBIConfig(pbi);
     } catch (err) {
-      console.log(err);
       setMessages((prev) => [
         ...prev,
         { role: "assistant", text: `⚠️ ${err.message}` },
@@ -140,14 +138,6 @@ export default function App() {
       block: "start",
     });
   }, [messages]);
-
-  const dotStyle = (i) => ({
-    display: "inline-block",
-    animation: `bounce 1.4s infinite ease-in-out ${i * 0.2}s`,
-    fontSize: "20px",
-    lineHeight: "0",
-    padding: "0 4px",
-  });
 
   return (
     <div
@@ -315,26 +305,68 @@ export default function App() {
                     </div>
                   );
                 })}
-
                 {loading && (
-                  <div
-                    style={{
-                      alignSelf: "flex-start",
-                      backgroundColor: "#f0f0f0",
-                      color: "#000",
-                      padding: "0.5rem 0.75rem",
-                      borderRadius: "12px",
-                      maxWidth: "30px",
-                      display: "flex",
-                      gap: "3px",
-                      justifyContent: "center",
-                      marginBottom: "0.25rem",
-                    }}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 200 200"
+                    width="50"
+                    height="50"
                   >
-                    <span style={dotStyle(0)}>•</span>
-                    <span style={dotStyle(1)}>•</span>
-                    <span style={dotStyle(2)}>•</span>
-                  </div>
+                    <circle
+                      fill="%23130208"
+                      stroke="%23130208"
+                      stroke-width="15"
+                      r="15"
+                      cx="40"
+                      cy="65"
+                    >
+                      <animate
+                        attributeName="cy"
+                        calcMode="spline"
+                        dur="2"
+                        values="65;135;65;"
+                        keySplines=".5 0 .5 1;.5 0 .5 1"
+                        repeatCount="indefinite"
+                        begin="-.4"
+                      ></animate>
+                    </circle>
+                    <circle
+                      fill="%23130208"
+                      stroke="%23130208"
+                      stroke-width="15"
+                      r="15"
+                      cx="100"
+                      cy="65"
+                    >
+                      <animate
+                        attributeName="cy"
+                        calcMode="spline"
+                        dur="2"
+                        values="65;135;65;"
+                        keySplines=".5 0 .5 1;.5 0 .5 1"
+                        repeatCount="indefinite"
+                        begin="-.2"
+                      ></animate>
+                    </circle>
+                    <circle
+                      fill="%23130208"
+                      stroke="%23130208"
+                      stroke-width="15"
+                      r="15"
+                      cx="160"
+                      cy="65"
+                    >
+                      <animate
+                        attributeName="cy"
+                        calcMode="spline"
+                        dur="2"
+                        values="65;135;65;"
+                        keySplines=".5 0 .5 1;.5 0 .5 1"
+                        repeatCount="indefinite"
+                        begin="0"
+                      ></animate>
+                    </circle>
+                  </svg>
                 )}
               </div>
 
