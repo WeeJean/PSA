@@ -34,10 +34,6 @@ def _ensure_region(df: pd.DataFrame) -> pd.DataFrame:
         )
     return df
 
-def _is_arrival_col(name: str) -> bool:
-    # strict: uses your exact alias
-    return name == ALIASES["arrival_accuracy"][0]
-
 def _coerce_numeric(df: pd.DataFrame) -> list[str]:
     """
     Convert number-like text to real numbers, but only mark a column as numeric if:

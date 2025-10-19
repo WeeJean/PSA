@@ -10,18 +10,15 @@ from langchain_core.messages import HumanMessage, AIMessage
 from pathlib import Path
 from dotenv import load_dotenv
 
-from agent_engine import run_agentic_query
+from agent_engine import run_agentic_query, suggest_next_queries
 
 
 # Local modules
 from insight_engine import (
-    explain,
     get_basic_info,
     DATA_PATH,
-    pd,           # if you use it in debug routes
     _df,
     force_recoerce,
-    ALIASES,
 )
 
 # Load env from backend/.env
@@ -177,32 +174,6 @@ def debug_preview_weeks():
     except Exception as e:
         return jsonify({"error": "debug/preview-weeks failed", "details": str(e)}), 500
 
-# @app.get("/llm-config")
-# def llm_config():
-#     try:
-#         from agent_factory import _make_llm
-#         llm = _make_llm()
-#         return jsonify({
-#             "llm_class": llm.__class__.__name__,
-#             "azure_endpoint": getattr(llm, "azure_endpoint", None),
-#             "azure_deployment": getattr(llm, "azure_deployment", None),
-#             "model_or_name": getattr(llm, "model_name", None) or getattr(llm, "model", None),
-#         }), 200
-#     except Exception as e:
-#         import traceback
-#         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
-
-# @app.get("/llm-selftest")
-# def llm_selftest():
-#     try:
-#         from agent_factory import _make_llm
-#         llm = _make_llm()
-#         _ = llm.invoke([{"role": "user", "content": "ping"}])
-#         return jsonify({"ok": True}), 200
-#     except Exception as e:
-#         import traceback
-#         return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()}), 500
-
 @app.post("/recoerce")
 def recoerce():
     try:
@@ -265,105 +236,39 @@ def data_info():
     except Exception as e:
         return jsonify({"error": "data-info failed", "details": str(e)}), 500
 
-# @app.get("/agent-selftest")
-# def agent_selftest():
-#     try:
-#         agent = make_agent()
-#         return jsonify({"executor_class": agent.__class__.__name__, "ok": True})
-#     except Exception as e:
-#         import traceback
-#         return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()}), 500
-    
-# ---------- Single agent endpoint ----------
-# @app.post("/agent-ask")
-# def agent_ask():
-#     try:
-#         body = request.get_json(silent=True) or {}
-#         q = (body.get("question") or "").strip()
-#         history = body.get("history", [])
-#         if not q:
-#             return jsonify({"answer_type":"error","message":"Missing 'question'","payload":{}}), 400
-
-#         agent = make_agent()
-
-#         # Convert simple history into LC messages
-#         history_msgs = []
-#         for t in history:
-#             role = (t.get("role") or "").lower()
-#             content = t.get("content") or ""
-#             if role == "human":
-#                 history_msgs.append(HumanMessage(content=content))
-#             elif role in ("ai","assistant"):
-#                 history_msgs.append(AIMessage(content=content))
-
-#         # Call the simple executor
-#         result = agent.invoke({"input": q, "chat_history": history_msgs})
-#         content = result if isinstance(result, str) else result.get("output", "")
-
-#         try:
-#             envelope = json.loads(content)
-#         except Exception:
-#             envelope = {"answer_type":"text","message":str(content),"payload":{},"tool_calls":[]}
-
-#         for key in ("answer_type","message","payload"):
-#             envelope.setdefault(key, "" if key!="payload" else {})
-#         return jsonify(envelope), 200
-
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#         "answer_type": "error",
-#         "message": "agent failed",
-#         "payload": {"details": str(e), "trace": traceback.format_exc()}
-#     }), 500
-
 @app.post("/ask")
 def ask_unified():
-    """
-    Unified ask endpoint.
-
-    Body:
-      {
-        "question": "Explain APAC performance" | "Show WoW trend for ArrivalAccuracy(FinalBTR) in APAC",
-        "filters": { "Region": ["APAC"] },   # optional; used only in 'pipeline' mode
-        "mode": "agent" | "pipeline"         # optional; default = "agent"
-      }
-
-    Returns (normalized):
-      - mode = "pipeline": { "mode":"pipeline", "text": <summary>, "details": {...} }
-      - mode = "agent":    { "mode":"agent",    "text": <answer>,  "raw": {} }
-    """
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or data.get("query") or "").strip()
-    mode = (data.get("mode") or "agent").lower()
-    filters = data.get("filters")
-
     if not question:
         return jsonify({"error": "Missing 'question'"}), 400
 
-    try:
-        if mode == "pipeline":
-            details, summary = None, None
-            # insight_engine.explain returns (merged_dict, summary_text)
-            merged, summary = explain(question, filters)
-            return jsonify({
-                "mode": "pipeline",
-                "text": summary,
-                "details": merged
-            }), 200
+    # Optional context sent by the client
+    last_question = (data.get("last_question") or "").strip()
+    recent_suggestions = data.get("recent_suggestions") or []
 
-        # default = agent
+    try:
         answer = run_agentic_query(question)
+
+        # optional context to specialize suggestions
+        context = {
+            "question": question,
+            "answer_excerpt": str(answer)[:800],
+        }
+        chips = suggest_next_queries(
+            context=context,
+            limit=5,
+            last_question=question or last_question,
+            ban_list=recent_suggestions if isinstance(recent_suggestions, list) else []
+        )
+
         return jsonify({
-            "mode": "agent",
             "text": answer,
-            "raw": {}
+            "details": {"suggestions": chips}
         }), 200
-  
     except Exception as e:
         return jsonify({"error": "ask failed", "details": str(e)}), 500
 
-    
 if __name__ == "__main__":
     print("Starting Flask from:", __file__)
     app.run(port=8000, debug=True)

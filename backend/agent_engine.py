@@ -7,7 +7,7 @@ from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_core.tools import tool
 
 # bring your data tools in
-from insight_engine import summarize_metric, get_basic_info, explain, _df, kpi_snapshot, _norm_filters, _json, anomalies_by_group
+from insight_engine import summarize_metric, get_basic_info, explain, _df, kpi_snapshot, _norm_filters, _json, anomalies_by_group, get_llm
 
 load_dotenv()
 
@@ -148,6 +148,160 @@ prompt = ChatPromptTemplate.from_messages([
 # --- Agent (LangChain tools agent) ---
 agent_runnable = create_openai_tools_agent(llm, tools, prompt)
 agent = AgentExecutor(agent=agent_runnable, tools=tools, verbose=False)
+
+# --- Suggestion generator: produce ONLY prompts the agent can run with tools ---
+# --- helpers for dedupe / similarity ---
+def _normalize_prompt_text(s: str) -> list[str]:
+    import re
+    stop = {"the","a","an","for","of","to","in","on","by","with","this","that","these","those","and","or"}
+    t = re.sub(r"[^a-z0-9 ]+", " ", (s or "").lower())
+    toks = [w for w in t.split() if w and w not in stop]
+    return toks
+
+def _too_similar(a: str, b: str, thresh: float = 0.6) -> bool:
+    A, B = set(_normalize_prompt_text(a)), set(_normalize_prompt_text(b))
+    if not A or not B: 
+        return False
+    inter = len(A & B); union = len(A | B)
+    return (inter / union) >= thresh
+
+def suggest_next_queries(
+    context: dict | None = None,
+    limit: int = 6,
+    last_question: str | None = None,
+    ban_list: list[str] | None = None,
+) -> list[str]:
+    """
+    Produce diversified next-step queries. Buckets:
+      - KPI snapshot
+      - Trend WoW (or MoM)
+      - Rank best performers
+      - Rank worst performers
+      - Anomalies by group
+      - Compare 2 scopes
+      - Drill into drivers
+      - Distinct values (scoping help)
+      - Peek column
+      - Prescriptive actions (steps to take)
+
+    Returns short imperatives (4–12 words), no trailing period.
+    """
+    allowed_metrics = [
+        "ArrivalAccuracy(FinalBTR)",
+        "Berth Time(hours):ATU-ATB",
+        "AssuredPortTimeAchieved(%)",
+        "Carbon Abatement (Tonnes)",
+        "Bunker Saved(USD)",
+    ]
+    ban_list = ban_list or []
+    ctx = context or {}
+    import json as _json
+    ctx_text = _json.dumps(ctx, default=str)[:3000]
+
+    prompt = f"""You produce NEXT-STEP QUERIES the PSA analytics copilot can run or answer.
+Return ONLY a JSON array of {limit+3} short strings. No prose, no keys, no markdown.
+
+Rules:
+- Start with an imperative verb (Show/Summarize/Rank/Investigate/Compare/List/Peek/Recommend).
+- 4–12 words, no trailing period.
+- Prefer concrete scopes (APAC/EMEA/BU names) when possible.
+- <metric> must be one of:
+  {allowed_metrics}
+
+Cover a VARIETY of intents; include at least one from each where sensible:
+  • KPI snapshot         → “Summarize KPI snapshot for <scope>”
+  • Trend WoW / MoM      → “Show WoW trend for <metric> in <scope>”
+  • Rank best            → “Rank best 3 BUs by <metric> in <scope>”
+  • Rank worst           → “Rank worst 3 BUs by <metric> in <scope>”
+  • Anomalies            → “Find anomalies by BU for <metric> in <scope>”
+  • Compare scopes       → “Compare APAC vs EMEA on <metric>”
+  • Drivers / drilldown  → “Investigate drivers of <metric> in <scope>”
+  • Distinct values      → “List distinct values of BU”
+  • Peek column          → “Peek column <name> (first 8 values)”
+  • Prescriptive steps   → “Recommend next 3 actions to improve <metric> in <scope>”
+
+DO NOT repeat or paraphrase the user's current question or any items in DO_NOT_REPEAT.
+
+CONTEXT:
+{ctx_text}
+
+CURRENT_QUESTION:
+{(last_question or "")[:300]}
+
+DO_NOT_REPEAT:
+{_json.dumps(ban_list[:10], ensure_ascii=False)}
+"""
+
+    llm = get_llm()
+    raw = llm.invoke(prompt).content.strip()
+
+    # Parse & validate
+    import json, re
+    try:
+        items = json.loads(raw)
+        if not isinstance(items, list): raise ValueError("not list")
+    except Exception:
+        items = []
+
+    verb = re.compile(r"^(Show|Summarize|Compare|Rank|Investigate|List|Peek|Recommend)\b", re.I)
+    # broader intent set
+    intent = re.compile(
+        r"(KPI|snapshot|WoW|trend|week|month|MoM|rank|best|worst|top|bottom|"
+        r"anomal|outlier|compare|vs|drivers?|drill|distinct|unique|values?|list|"
+        r"peek|sample|column|actions?|steps?|improve)",
+        re.I,
+    )
+
+    curated, seen = [], set()
+    for s in items:
+        if not isinstance(s, str): continue
+        t = s.strip().rstrip(".")
+        if not t or not verb.search(t) or not intent.search(t): continue
+        if last_question and _too_similar(t, last_question): continue
+        if any(_too_similar(t, b) for b in ban_list): continue
+        k = t.lower()
+        if k in seen: continue
+        seen.add(k)
+        curated.append(t)
+
+    # Diversify by bucket (one each, in order of usefulness)
+    def bucket_key(t: str) -> str:
+        tl = t.lower()
+        if "kpi" in tl or "snapshot" in tl: return "kpi"
+        if "wow" in tl or "trend" in tl or "month" in tl or "mom" in tl: return "trend"
+        if "rank" in tl and ("best" in tl or "top" in tl): return "best"
+        if "rank" in tl and ("worst" in tl or "bottom" in tl): return "worst"
+        if "anomal" in tl or "outlier" in tl: return "anom"
+        if "compare" in tl or " vs " in tl: return "compare"
+        if "driver" in tl or "drill" in tl: return "drivers"
+        if "distinct" in tl or "unique" in tl or "values" in tl or "list " in tl: return "distinct"
+        if "peek" in tl or "sample" in tl or "column" in tl: return "peek"
+        if "action" in tl or "steps" in tl or "improve" in tl or "recommend" in tl: return "actions"
+        return "other"
+
+    buckets = {k: [] for k in ["kpi","trend","best","worst","anom","compare","drivers","distinct","peek","actions"]}
+    for t in curated:
+        k = bucket_key(t)
+        if k in buckets and not buckets[k]:
+            buckets[k] = [t]
+
+    diversified = []
+    order = ["kpi","trend","best","worst","anom","compare","drivers","distinct","peek","actions"]
+    for k in order:
+        diversified += buckets[k]
+        if len(diversified) >= limit: break
+
+    # Fallback if LLM gave nothing useful
+    if not diversified:
+        diversified = [
+            "Summarize KPI snapshot for APAC",
+            "Show WoW trend for ArrivalAccuracy(FinalBTR) in APAC",
+            "Rank worst 3 BUs by ArrivalAccuracy(FinalBTR) in APAC",
+            "Recommend next 3 actions to improve ArrivalAccuracy(FinalBTR) in APAC",
+        ]
+    return diversified[:limit]
+
+
 
 def run_agentic_query(query: str) -> str:
     """Return final text answer (string)."""
