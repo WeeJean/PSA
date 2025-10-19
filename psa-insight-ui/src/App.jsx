@@ -19,63 +19,88 @@ export default function App() {
 
   const API_BASE = "http://127.0.0.1:8000";
 
+  function extractSuggestionsFromText(s, max = 5) {
+    if (!s) return [];
+    const lines = String(s)
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const candidates = lines.filter(
+      (l) =>
+        /^[-*]\s+/.test(l) || // bullets
+        /^\d+\.\s+/.test(l) || // numbered
+        /^(increase|reduce|review|investigate|optimi[sz]e|monitor|coordinate|escalate|deploy|pilot|train|audit|fix|patch|tune|rebalance|re[- ]?route|communicate|benchmark|validate|improve|lower|boost|align)\b/i.test(
+          l
+        ) // imperative-ish
+    );
+    const cleaned = candidates.map((l) => l.replace(/^[-*\d.]+\s+/, "").trim());
+    const out = [],
+      seen = new Set();
+    for (const c of cleaned) {
+      const k = c.toLowerCase();
+      if (!seen.has(k) && c) {
+        seen.add(k);
+        out.push(c.slice(0, 120));
+        if (out.length >= max) break;
+      }
+    }
+    return out;
+  }
+
   const askLLM = async (forcedQuestion) => {
     const q = (forcedQuestion ?? query).trim();
     if (!q) return;
 
     setLoading(true);
-
-    // Show the user's message immediately
     setMessages((prev) => [...prev, { role: "user", text: q }]);
 
     try {
       const res = await fetch(`${API_BASE}/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // IMPORTANT: backend expects { question: "<text>" }
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify({ question: q }), // no mode, agent-only backend
       });
 
+      const raw = await res.text();
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
+        throw new Error(raw || `HTTP ${res.status}`);
       }
-      const data = await res.json();
 
-      // Normalize the 3 possible shapes
-      let assistantText = "";
-      let nextSuggestions = [];
-      let pbi = null;
-
-      if (data?.mode === "pipeline") {
-        // {mode:"pipeline", text, details}
-        assistantText = data.text ?? "";
-        nextSuggestions =
-          data.details?.suggestions || data.details?.next_steps || [];
-        pbi = data.details?.powerBI ?? null;
-      } else if (data?.mode === "agent") {
-        // {mode:"agent", text}
-        assistantText = data.text ?? "";
-        // agent mode typically has no suggestions
-      } else if (data?.answer_type) {
-        // Envelope: {answer_type, message, payload}
-        assistantText = data.message ?? "";
-        nextSuggestions = data.payload?.suggestions ?? [];
-        pbi = data.payload?.powerBI ?? null;
-      } else {
-        // Fallback: show whatever we got (useful while integrating)
-        assistantText = typeof data === "string" ? data : JSON.stringify(data);
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = { text: raw };
       }
+
+      // Backend contract: { text, details?: { suggestions?, powerBI? } }
+      const assistantText =
+        data?.text ??
+        data?.message ?? // legacy safety
+        (typeof data === "string" ? data : JSON.stringify(data));
+
+      let chips = data?.details?.suggestions ?? [];
+      if (!chips.length) {
+        // derive chips from the text if backend didn't provide any
+        chips = extractSuggestionsFromText(assistantText, 5);
+      }
+
+      const pbi =
+        data?.details?.powerBI ??
+        data?.payload?.powerBI ?? // legacy safety
+        null;
+
       setMessages((prev) => [
         ...prev,
         { role: "assistant", text: assistantText },
       ]);
-      setSuggestions(nextSuggestions);
-      setPowerBIConfig(pbi);
+      setSuggestions(chips);
+      if (pbi) setPowerBIConfig(pbi);
     } catch (err) {
+      console.error(err);
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", text: `⚠️ ${err.message}` },
+        { role: "assistant", text: `⚠️ ${err.message || "Request failed"}` },
       ]);
     } finally {
       setLoading(false);
@@ -137,7 +162,15 @@ export default function App() {
       behavior: "smooth",
       block: "start",
     });
-  }, [messages]);
+  }, [response]);
+
+  const dotStyle = (i) => ({
+    display: "inline-block",
+    animation: `bounce 1.4s infinite ease-in-out ${i * 0.2}s`,
+    fontSize: "20px",
+    lineHeight: "0",
+    padding: "0 4px",
+  });
 
   return (
     <div
@@ -305,68 +338,26 @@ export default function App() {
                     </div>
                   );
                 })}
+
                 {loading && (
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 200 200"
-                    width="50"
-                    height="50"
+                  <div
+                    style={{
+                      alignSelf: "flex-start",
+                      backgroundColor: "#f0f0f0",
+                      color: "#000",
+                      padding: "0.5rem 0.75rem",
+                      borderRadius: "12px",
+                      maxWidth: "30px",
+                      display: "flex",
+                      gap: "3px",
+                      justifyContent: "center",
+                      marginBottom: "0.25rem",
+                    }}
                   >
-                    <circle
-                      fill="%23130208"
-                      stroke="%23130208"
-                      stroke-width="15"
-                      r="15"
-                      cx="40"
-                      cy="65"
-                    >
-                      <animate
-                        attributeName="cy"
-                        calcMode="spline"
-                        dur="2"
-                        values="65;135;65;"
-                        keySplines=".5 0 .5 1;.5 0 .5 1"
-                        repeatCount="indefinite"
-                        begin="-.4"
-                      ></animate>
-                    </circle>
-                    <circle
-                      fill="%23130208"
-                      stroke="%23130208"
-                      stroke-width="15"
-                      r="15"
-                      cx="100"
-                      cy="65"
-                    >
-                      <animate
-                        attributeName="cy"
-                        calcMode="spline"
-                        dur="2"
-                        values="65;135;65;"
-                        keySplines=".5 0 .5 1;.5 0 .5 1"
-                        repeatCount="indefinite"
-                        begin="-.2"
-                      ></animate>
-                    </circle>
-                    <circle
-                      fill="%23130208"
-                      stroke="%23130208"
-                      stroke-width="15"
-                      r="15"
-                      cx="160"
-                      cy="65"
-                    >
-                      <animate
-                        attributeName="cy"
-                        calcMode="spline"
-                        dur="2"
-                        values="65;135;65;"
-                        keySplines=".5 0 .5 1;.5 0 .5 1"
-                        repeatCount="indefinite"
-                        begin="0"
-                      ></animate>
-                    </circle>
-                  </svg>
+                    <span style={dotStyle(0)}>•</span>
+                    <span style={dotStyle(1)}>•</span>
+                    <span style={dotStyle(2)}>•</span>
+                  </div>
                 )}
               </div>
 

@@ -1,5 +1,5 @@
 # agent_engine.py
-import os
+import os, re
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -12,12 +12,6 @@ from insight_engine import summarize_metric, get_basic_info, explain, _df, kpi_s
 load_dotenv()
 
 # --- Tools ---
-@tool("run_pipeline", return_direct=False)
-def run_pipeline_tool(question: str, filters: dict | None = None) -> dict:
-    """Run the structured pipeline to generate a business explanation."""
-    merged, summary = explain(question, filters)
-    return {"summary": summary, "details": merged}
-
 @tool("data_info", return_direct=False)
 def data_info_tool() -> dict:
     """Basic info about current dataset."""
@@ -113,7 +107,7 @@ def peek_tool(column: str, n: int = 8) -> str:
         "samples": s.astype(str).tolist()
     })
 
-tools = [run_pipeline_tool, data_info_tool, debug_coverage_tool, kpi_tool, trend_tool, anomalies_tool, distinct_tool, peek_tool]
+tools = [data_info_tool, debug_coverage_tool, kpi_tool, trend_tool, anomalies_tool, distinct_tool, peek_tool]
 
 # --- LLM ---
 llm = AzureChatOpenAI(
@@ -129,32 +123,55 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 prompt = ChatPromptTemplate.from_messages([
     ("system",
-     "You are PSA’s data analytics assistant. Use tools when helpful:\n"
-     "- run_pipeline(question, filters?) for structured KPI/Trend/Anomalies + actions\n"
-     "- kpi_snapshot/trend_wow/anomalies_by_group for specific analytics\n"
-     "- data_info/distinct_values/peek_column for schema exploration.\n"
-     "Be concise and explain in business terms."
-    ),
-    # Optional chat history support
-    MessagesPlaceholder(variable_name="chat_history", optional=True),
-
-    # The current user input
-    ("human", "{input}"),
-
-    # REQUIRED by create_openai_tools_agent:
-    MessagesPlaceholder(variable_name="agent_scratchpad"),
+     "You are PSA’s data analytics assistant. Decide which tools to use and answer concisely.\n"
+     "If the user mentions a Region (APAC/EMEA/AMERICAS/ME) or a BU (e.g., SINGAPORE), pass it via filters_json.\n"
+     "Always finish with 3–5 short, imperative next-step suggestions (bulleted or numbered)."),
+    MessagesPlaceholder("messages"),
+    # REQUIRED for tools agent:
+    ("system", "Use the tools above. Keep responses business-friendly."),
+    ("placeholder", "{agent_scratchpad}"),
 ])
 
 # --- Agent (LangChain tools agent) ---
 agent_runnable = create_openai_tools_agent(llm, tools, prompt)
 agent = AgentExecutor(agent=agent_runnable, tools=tools, verbose=False)
 
-def run_agentic_query(query: str) -> str:
-    """Return final text answer (string)."""
-    try:
-        result = agent.invoke({"input": query})
-        if isinstance(result, dict) and "output" in result:
-            return result["output"]
-        return str(result)
-    except Exception as e:
-        return f"Error: {e}"
+SUGG_VERB_RX = r"^(increase|reduce|review|investigate|optimi[sz]e|monitor|coordinate|escalate|deploy|pilot|train|audit|fix|patch|tune|rebalance|re[- ]?route|communicate|benchmark|validate|improve|lower|boost|align)\b"
+
+def _extract_suggestions(text: str, limit: int = 5) -> list[str]:
+    if not text:
+        return []
+    lines = [l.strip() for l in str(text).splitlines() if l.strip()]
+    cands = []
+    for l in lines:
+        if l.startswith(("-", "*")) or re.match(r"^\d+\.\s+", l):
+            cands.append(l)
+        elif re.match(SUGG_VERB_RX, l, re.I):
+            cands.append(l)
+    cleaned = [re.sub(r"^[-*\d.]+\s+", "", x).strip() for x in cands]
+    out, seen = [], set()
+    for s in cleaned:
+        k = s.lower()
+        if s and k not in seen:
+            seen.add(k)
+            out.append(s[:120])
+            if len(out) >= limit:
+                break
+    return out
+
+def run_agentic_query(query: str) -> dict:
+    """Returns {text, suggestions[]}"""
+    result = agent.invoke({"messages": [("user", query)]})
+    # Try to pull the final assistant text robustly
+    text = ""
+    if isinstance(result, dict):
+        if "output" in result and result["output"]:
+            text = result["output"]
+        elif "messages" in result and isinstance(result["messages"], list) and result["messages"]:
+            last = result["messages"][-1]
+            text = getattr(last, "content", "") if not isinstance(last, tuple) else last[1]
+    else:
+        text = str(result)
+
+    suggestions = _extract_suggestions(text, 5)
+    return {"text": text or "(no text)", "suggestions": suggestions}

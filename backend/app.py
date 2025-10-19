@@ -1,5 +1,5 @@
 # app.py
-import os
+import os, re
 import json
 import requests
 from pathlib import Path
@@ -11,7 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from agent_engine import run_agentic_query
-
+from insight_engine import get_llm
 
 # Local modules
 from insight_engine import (
@@ -42,6 +42,48 @@ AZURE_API_KEY = os.getenv("AZURE_OPENAI_KEY")
 AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://psacodesprint2025.azure-api.net")
 DEPLOYMENT_NAME = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4.1-nano")
 API_VERSION = os.getenv("AZURE_API_VERSION", "2025-01-01-preview")
+
+def _extract_suggestions(text: str, limit: int = 5) -> list[str]:
+    """Turn an 'Actions' paragraph into 3–5 short chips."""
+    if not text:
+        return []
+    lines = [l.strip() for l in str(text).splitlines() if l.strip()]
+
+    cands = []
+    for l in lines:
+        if l.startswith(("-", "*")) or re.match(r"^\d+\.\s+", l):
+            cands.append(l)
+        elif re.match(r"^(increase|reduce|review|investigate|optimi[sz]e|follow up|alert|escalate|deploy|pilot|monitor|coordinate|train|audit|fix|patch|tune|rebalance|re-route|standardi[sz]e|communicate|benchmark|validate)\b", l, re.I):
+            cands.append(l)
+
+    cleaned = [re.sub(r"^[-*\d.]+\s+", "", x).strip() for x in cands]
+    out, seen = [], set()
+    for s in cleaned:
+        k = s.lower()
+        if s and k not in seen:
+            seen.add(k)
+            out.append(s[:120])
+            if len(out) >= limit:
+                break
+    return out
+
+# optional: use the model to synthesize chips if extraction fails
+def _llm_suggestions(context: dict, limit: int = 5) -> list[str]:
+    try:
+        llm = get_llm()
+        prompt = (
+            "From the context below, produce "
+            f"{limit} short, imperative next-step suggestions (4–10 words each). "
+            "Return ONLY a JSON array of strings.\n\n"
+            f"CONTEXT:\n{json.dumps(context, default=str)}"
+        )
+        raw = llm.invoke(prompt).content
+        arr = json.loads(raw)
+        if isinstance(arr, list):
+            return [str(x)[:120] for x in arr][:limit]
+    except Exception:
+        pass
+    return []
 
 # ---------- Health / Misc ----------
 @app.get("/")
@@ -318,50 +360,19 @@ def data_info():
 #     }), 500
 
 @app.post("/ask")
-def ask_unified():
-    """
-    Unified ask endpoint.
-
-    Body:
-      {
-        "question": "Explain APAC performance" | "Show WoW trend for ArrivalAccuracy(FinalBTR) in APAC",
-        "filters": { "Region": ["APAC"] },   # optional; used only in 'pipeline' mode
-        "mode": "agent" | "pipeline"         # optional; default = "agent"
-      }
-
-    Returns (normalized):
-      - mode = "pipeline": { "mode":"pipeline", "text": <summary>, "details": {...} }
-      - mode = "agent":    { "mode":"agent",    "text": <answer>,  "raw": {} }
-    """
+def ask():
     data = request.get_json(silent=True) or {}
-    question = (data.get("question") or data.get("query") or "").strip()
-    mode = (data.get("mode") or "agent").lower()
-    filters = data.get("filters")
-
-    if not question:
+    q = (data.get("question") or data.get("query") or "").strip()
+    if not q:
         return jsonify({"error": "Missing 'question'"}), 400
-
     try:
-        if mode == "pipeline":
-            details, summary = None, None
-            # insight_engine.explain returns (merged_dict, summary_text)
-            merged, summary = explain(question, filters)
-            return jsonify({
-                "mode": "pipeline",
-                "text": summary,
-                "details": merged
-            }), 200
-
-        # default = agent
-        answer = run_agentic_query(question)
+        result = run_agentic_query(q)  # {text, suggestions[]}
         return jsonify({
-            "mode": "agent",
-            "text": answer,
-            "raw": {}
+            "text": result["text"],
+            "details": {"suggestions": result.get("suggestions", [])}
         }), 200
-  
     except Exception as e:
-        return jsonify({"error": "ask failed", "details": str(e)}), 500
+        return jsonify({"error": "agent failed", "details": str(e)}), 500
 
     
 if __name__ == "__main__":
