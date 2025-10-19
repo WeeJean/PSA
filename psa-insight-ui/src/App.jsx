@@ -11,7 +11,7 @@ const { Text } = Typography;
 export default function App() {
   const [query, setQuery] = useState("");
   const [response, setResponse] = useState([]); // array of strings (alternating user/bot)
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [powerBIConfig, setPowerBIConfig] = useState(null); // optional: if agent returns embed
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
