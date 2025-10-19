@@ -16,6 +16,7 @@ export default function App() {
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
   const [suggestions, setSuggestions] = useState([]); // pipeline next steps
+  const [isFullscreen, setIsFullscreen] = useState(false); // to expand the chatbox
 
   const API_BASE = "http://127.0.0.1:8000";
 
@@ -239,13 +240,30 @@ export default function App() {
                   flexShrink: 0,
                   padding: "0.75rem 1rem",
                   borderBottom: "1px solid #e0e0e0",
-                  fontWeight: "bold",
-                  color: "black",
                   backgroundColor: "#fafafa",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
                 }}
               >
-                <img src="./public/BoMen.png" width="30px"></img>
-                ‎ ‎ Ask Bo-men
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <img src="./public/BoMen.png" width="30px" alt="Bo-men" />
+                  <span style={{ fontWeight: "bold", color: "black" }}>Ask Bo-men</span>
+                </div>
+
+                <Button
+                  type="text"
+                  onClick={() => setIsFullscreen(true)}
+                  style={{
+                    fontSize: "1.25rem",
+                    padding: 0,
+                    color: "#333",
+                    width: "30px",
+                  }}
+                  title="Expand chat"
+                >
+                  ⛶
+                </Button>
               </div>
 
               {/* Response area */}
@@ -411,7 +429,166 @@ export default function App() {
           </div>
         </Split>
       </main>
+      {isFullscreen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "white",
+            zIndex: 9999,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {/* Header */}
+          <div
+            style={{
+              flexShrink: 0,
+              padding: "0.75rem 1rem",
+              borderBottom: "1px solid #e0e0e0",
+              backgroundColor: "#fafafa",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <img src="./public/BoMen.png" width="30px" alt="Bo-men" />
+              <span style={{ fontWeight: "bold", color: "black" }}>
+                Ask Bo-men
+              </span>
+            </div>
 
+            <Button
+              type="text"
+              onClick={() => setIsFullscreen(false)}
+              style={{ fontSize: "1.25rem", padding: 0, color: "#333", width: "30px"}}
+              title="Exit fullscreen"
+            >
+              ✕
+            </Button>
+          </div>
+
+          {/* Fullscreen content */}
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              padding: "1rem",
+              boxSizing: "border-box",
+            }}
+          >
+            {/* reuse the same chat UI */}
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                width: "100%",
+                maxWidth: "800px",
+                height: "100%",
+                backgroundColor: "#fff",
+                borderRadius: "7px",
+                boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
+                overflow: "hidden",
+              }}
+            >
+              {/* Copy your response area + footer here */}
+              {/* Response area */}
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: "auto",
+                  width: "100%",
+                  padding: "1rem",
+                  fontSize: "14px",
+                  wordBreak: "break-word",
+                  color: "black",
+                  whiteSpace: "pre-wrap",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "10px",
+                }}
+              >
+                {messages.map((m, idx) => {
+                  const isBot = m.role === "assistant";
+                  const isLast = idx === messages.length - 1;
+                  return (
+                    <div
+                      key={idx}
+                      ref={isLast ? lastMessageRef : null}
+                      style={{
+                        alignSelf: isBot ? "flex-start" : "flex-end",
+                        backgroundColor: isBot ? "#f0f0f0" : "#1890ff",
+                        color: isBot ? "#000" : "#fff",
+                        padding: "0.5rem 0.75rem",
+                        borderRadius: "12px",
+                        maxWidth: "80%",
+                        wordBreak: "break-word",
+                        textAlign: "left",
+                        marginBottom: "0.25rem",
+                      }}
+                    >
+                      {isBot ? <ReactMarkdown>{m.text}</ReactMarkdown> : m.text}
+                      {isBot && isLast && suggestions?.length > 0 && (
+                        <div style={{ marginTop: "8px" }}>
+                          <Space wrap>
+                            {suggestions.map((s, i) => (
+                              <Button key={i} size="small" onClick={() => askLLM(s)}>
+                                {s}
+                              </Button>
+                            ))}
+                          </Space>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Footer */}
+              <div
+                style={{
+                  flexShrink: 0,
+                  display: "flex",
+                  gap: "0.5rem",
+                  padding: "0.5rem 1rem",
+                  borderTop: "1px solid #e0e0e0",
+                  alignItems: "flex-end",
+                }}
+              >
+                <TextArea
+                  rows={1}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onPressEnter={(e) => {
+                    if (!e.shiftKey) {
+                      e.preventDefault();
+                      askLLM();
+                    }
+                  }}
+                  placeholder="Type your question..."
+                  style={{ flex: 1, resize: "none", fontSize: "14px" }}
+                />
+                <Button
+                  type="primary"
+                  onClick={() => askLLM()}
+                  style={{
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  ➤
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* FOOTER */}
       <footer
         style={{
