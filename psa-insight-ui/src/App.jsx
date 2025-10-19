@@ -42,6 +42,7 @@ export default function App() {
           l
         ) // imperative-ish
     );
+
     const cleaned = candidates.map((l) => l.replace(/^[-*\d.]+\s+/, "").trim());
     const out = [],
       seen = new Set();
@@ -146,12 +147,11 @@ export default function App() {
               maxWidth: "100%", // never overflow bubble width
               textAlign: "left",
               lineHeight: 1.25,
-              whiteSpace: "normal", // ✅ allow wrapping inside the button
+              whiteSpace: "normal",
             }}
           >
             <span
               style={{
-                // ✅ let the text wrap; no ellipsis
                 whiteSpace: "normal",
                 wordBreak: "break-word", // break long words
                 overflowWrap: "anywhere", // Safari/iOS friendly
@@ -209,7 +209,7 @@ export default function App() {
       behavior: "smooth",
       block: "start",
     });
-  }, [response]);
+  }, [messages]);
 
   const dotStyle = (i) => ({
     display: "inline-block",
@@ -324,8 +324,7 @@ export default function App() {
                   backgroundColor: "#fafafa",
                 }}
               >
-                <img src="./public/BoMen.png" width="30px"></img>
-                ‎ ‎ Ask Bo-men
+                <img src="./public/BoMen.png" width="30px"></img>‎ ‎ Ask Bo-men
               </div>
 
               {/* Response area */}
@@ -385,32 +384,81 @@ export default function App() {
                       {isBot && isLast && suggestions?.length > 0 && (
                         <SuggestionChips
                           items={suggestions}
-                          onClick={(s) => askLLM(s)}
+                          onClick={(s) => {
+                            // show loader right away
+                            setLoading(true);
+                            // let React paint the loader, then run askLLM
+                            setTimeout(() => {
+                              askLLM(s);
+                            }, 0);
+                          }}
                         />
                       )}
                     </div>
                   );
                 })}
-
                 {loading && (
-                  <div
-                    style={{
-                      alignSelf: "flex-start",
-                      backgroundColor: "#f0f0f0",
-                      color: "#000",
-                      padding: "0.5rem 0.75rem",
-                      borderRadius: "12px",
-                      maxWidth: "30px",
-                      display: "flex",
-                      gap: "3px",
-                      justifyContent: "center",
-                      marginBottom: "0.25rem",
-                    }}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 200 200"
+                    width="50"
+                    height="50"
                   >
-                    <span style={dotStyle(0)}>•</span>
-                    <span style={dotStyle(1)}>•</span>
-                    <span style={dotStyle(2)}>•</span>
-                  </div>
+                    <circle
+                      fill="%23130208"
+                      stroke="%23130208"
+                      stroke-width="15"
+                      r="15"
+                      cx="40"
+                      cy="65"
+                    >
+                      <animate
+                        attributeName="cy"
+                        calcMode="spline"
+                        dur="2"
+                        values="65;135;65;"
+                        keySplines=".5 0 .5 1;.5 0 .5 1"
+                        repeatCount="indefinite"
+                        begin="-.4"
+                      ></animate>
+                    </circle>
+                    <circle
+                      fill="%23130208"
+                      stroke="%23130208"
+                      stroke-width="15"
+                      r="15"
+                      cx="100"
+                      cy="65"
+                    >
+                      <animate
+                        attributeName="cy"
+                        calcMode="spline"
+                        dur="2"
+                        values="65;135;65;"
+                        keySplines=".5 0 .5 1;.5 0 .5 1"
+                        repeatCount="indefinite"
+                        begin="-.2"
+                      ></animate>
+                    </circle>
+                    <circle
+                      fill="%23130208"
+                      stroke="%23130208"
+                      stroke-width="15"
+                      r="15"
+                      cx="160"
+                      cy="65"
+                    >
+                      <animate
+                        attributeName="cy"
+                        calcMode="spline"
+                        dur="2"
+                        values="65;135;65;"
+                        keySplines=".5 0 .5 1;.5 0 .5 1"
+                        repeatCount="indefinite"
+                        begin="0"
+                      ></animate>
+                    </circle>
+                  </svg>
                 )}
               </div>
 
