@@ -11,22 +11,10 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [powerBIConfig, setPowerBIConfig] = useState(null); // optional: if agent returns embed
   const lastMessageRef = useRef(null);
-  // const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
-  // const [suggestions, setSuggestions] = useState([]); // pipeline next steps
-  // each assistant message can carry its own suggestions array
   const [messages, setMessages] = useState([]); // [{ role: 'user'|'assistant', text: string, suggestions?: string[] }]
-  // const chipRowRef = useRef(null);
-  // const [chipRowH, setChipRowH] = useState(40); // reserve space under textarea
   const hasRun = useRef(false);
 
   const API_BASE = "http://127.0.0.1:8000";
-
-  // useLayoutEffect(() => {
-  //   if (chipRowRef.current) {
-  //     const h = chipRowRef.current.getBoundingClientRect().height || 40;
-  //     setChipRowH(h);
-  //   }
-  // }, [suggestions]);
 
   function extractSuggestionsFromText(s, max = 5) {
     if (!s) return [];
