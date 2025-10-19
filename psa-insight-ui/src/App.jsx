@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import Split from "react-split";
 import { Input, Button, Card, Typography, Space } from "antd";
 import PowerBIReport from "./PowerBIReport";
@@ -13,67 +13,101 @@ export default function App() {
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{role:'user'|'assistant', text:string}]
   const [suggestions, setSuggestions] = useState([]); // pipeline next steps
+  const chipRowRef = useRef(null);
+  const [chipRowH, setChipRowH] = useState(40); // reserve space under textarea
   const hasRun = useRef(false);
 
   const API_BASE = "http://127.0.0.1:8000";
+
+  useLayoutEffect(() => {
+    if (chipRowRef.current) {
+      const h = chipRowRef.current.getBoundingClientRect().height || 40;
+      setChipRowH(h);
+    }
+  }, [suggestions]);
+
+  function extractSuggestionsFromText(s, max = 5) {
+    if (!s) return [];
+    const lines = String(s)
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const candidates = lines.filter(
+      (l) =>
+        /^[-*]\s+/.test(l) || // bullets
+        /^\d+\.\s+/.test(l) || // numbered
+        /^(increase|reduce|review|investigate|optimi[sz]e|monitor|coordinate|escalate|deploy|pilot|train|audit|fix|patch|tune|rebalance|re[- ]?route|communicate|benchmark|validate|improve|lower|boost|align)\b/i.test(
+          l
+        ) // imperative-ish
+    );
+    const cleaned = candidates.map((l) => l.replace(/^[-*\d.]+\s+/, "").trim());
+    const out = [],
+      seen = new Set();
+    for (const c of cleaned) {
+      const k = c.toLowerCase();
+      if (!seen.has(k) && c) {
+        seen.add(k);
+        out.push(c.slice(0, 120));
+        if (out.length >= max) break;
+      }
+    }
+    return out;
+  }
 
   const askLLM = async (forcedQuestion) => {
     const q = (forcedQuestion ?? query).trim();
     if (!q) return;
 
     setLoading(true);
-
-    // Show the user's message immediately
     setMessages((prev) => [...prev, { role: "user", text: q }]);
 
     try {
       const res = await fetch(`${API_BASE}/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // IMPORTANT: backend expects { question: "<text>" }
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify({ question: q }), // no mode, agent-only backend
       });
 
+      const raw = await res.text();
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
+        throw new Error(raw || `HTTP ${res.status}`);
       }
-      const data = await res.json();
 
-      // Normalize the 3 possible shapes
-      let assistantText = "";
-      let nextSuggestions = [];
-      let pbi = null;
-
-      if (data?.mode === "pipeline") {
-        // {mode:"pipeline", text, details}
-        assistantText = data.text ?? "";
-        nextSuggestions =
-          data.details?.suggestions || data.details?.next_steps || [];
-        pbi = data.details?.powerBI ?? null;
-      } else if (data?.mode === "agent") {
-        // {mode:"agent", text}
-        assistantText = data.text ?? "";
-        // agent mode typically has no suggestions
-      } else if (data?.answer_type) {
-        // Envelope: {answer_type, message, payload}
-        assistantText = data.message ?? "";
-        nextSuggestions = data.payload?.suggestions ?? [];
-        pbi = data.payload?.powerBI ?? null;
-      } else {
-        // Fallback: show whatever we got (useful while integrating)
-        assistantText = typeof data === "string" ? data : JSON.stringify(data);
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = { text: raw };
       }
+
+      // Backend contract: { text, details?: { suggestions?, powerBI? } }
+      const assistantText =
+        data?.text ??
+        data?.message ?? // legacy safety
+        (typeof data === "string" ? data : JSON.stringify(data));
+
+      let chips = data?.details?.suggestions ?? [];
+      if (!chips.length) {
+        // derive chips from the text if backend didn't provide any
+        chips = extractSuggestionsFromText(assistantText, 5);
+      }
+
+      const pbi =
+        data?.details?.powerBI ??
+        data?.payload?.powerBI ?? // legacy safety
+        null;
+
       setMessages((prev) => [
         ...prev,
         { role: "assistant", text: assistantText },
       ]);
-      setSuggestions(nextSuggestions);
-      setPowerBIConfig(pbi);
+      setSuggestions(chips);
+      if (pbi) setPowerBIConfig(pbi);
     } catch (err) {
+      console.error(err);
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", text: `⚠️ ${err.message}` },
+        { role: "assistant", text: `⚠️ ${err.message || "Request failed"}` },
       ]);
     } finally {
       setLoading(false);
@@ -81,17 +115,54 @@ export default function App() {
     }
   };
 
-  console.log(messages);
-  const SuggestionChips = ({ items }) => {
+  const SuggestionChips = ({ items, onClick }) => {
     if (!items?.length) return null;
+
     return (
-      <Space wrap style={{ marginTop: 8 }}>
+      <div
+        style={{
+          marginTop: 8,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          width: "100%",
+        }}
+      >
         {items.map((s, i) => (
-          <Button key={i} size="small" onClick={() => askLLM(s)}>
-            {s}
-          </Button>
+          <button
+            key={i}
+            onClick={() => onClick?.(s)}
+            title={s}
+            style={{
+              // pill container
+              border: "1px solid #e0e0e0",
+              background: "#fff",
+              borderRadius: 10, // keeps the rounded “pill” shape even when multi-line
+              padding: "6px 12px",
+              cursor: "pointer",
+              display: "inline-block", // allow natural width + wrapping
+              maxWidth: "100%", // never overflow bubble width
+              textAlign: "left",
+              lineHeight: 1.25,
+              whiteSpace: "normal", // ✅ allow wrapping inside the button
+            }}
+          >
+            <span
+              style={{
+                // ✅ let the text wrap; no ellipsis
+                whiteSpace: "normal",
+                wordBreak: "break-word", // break long words
+                overflowWrap: "anywhere", // Safari/iOS friendly
+                color: "#333",
+                fontSize: 13,
+                display: "inline",
+              }}
+            >
+              {s}
+            </span>
+          </button>
         ))}
-      </Space>
+      </div>
     );
   };
 
@@ -108,41 +179,47 @@ export default function App() {
             question: "Give me the summary and actionable insights",
           }),
         });
-        // Normalize the 3 possible shapes
-        let assistantText = "";
-        let nextSuggestions = [];
-        let pbi = null;
-        const data = await res.json();
-        if (data?.mode === "pipeline") {
-          // {mode:"pipeline", text, details}
-          assistantText = data.text ?? "";
-          nextSuggestions =
-            data.details?.suggestions || data.details?.next_steps || [];
-          pbi = data.details?.powerBI ?? null;
-        } else if (data?.mode === "agent") {
-          // {mode:"agent", text}
-          assistantText = data.text ?? "";
-          // agent mode typically has no suggestions
-        } else if (data?.answer_type) {
-          // Envelope: {answer_type, message, payload}
-          assistantText = data.message ?? "";
-          nextSuggestions = data.payload?.suggestions ?? [];
-          pbi = data.payload?.powerBI ?? null;
-        } else {
-          // Fallback: show whatever we got (useful while integrating)
-          assistantText =
-            typeof data === "string" ? data : JSON.stringify(data);
+
+        const raw = await res.text();
+        if (!res.ok) {
+          throw new Error(raw || `HTTP ${res.status}`);
         }
+
+        let data;
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          data = { text: raw };
+        }
+
+        // Backend contract: { text, details?: { suggestions?, powerBI? } }
+        const assistantText =
+          data?.text ??
+          data?.message ?? // legacy safety
+          (typeof data === "string" ? data : JSON.stringify(data));
+
+        let chips = data?.details?.suggestions ?? [];
+        if (!chips.length) {
+          // derive chips from the text if backend didn't provide any
+          chips = extractSuggestionsFromText(assistantText, 5);
+        }
+
+        const pbi =
+          data?.details?.powerBI ??
+          data?.payload?.powerBI ?? // legacy safety
+          null;
+
         setMessages((prev) => [
           ...prev,
           { role: "assistant", text: assistantText },
         ]);
-        setSuggestions(nextSuggestions);
-        setPowerBIConfig(pbi);
+        setSuggestions(chips);
+        if (pbi) setPowerBIConfig(pbi);
       } catch (err) {
+        console.error(err);
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", text: `⚠️ ${err.message}` },
+          { role: "assistant", text: `⚠️ ${err.message || "Request failed"}` },
         ]);
       } finally {
         setLoading(false);
@@ -186,19 +263,7 @@ export default function App() {
         }}
       >
         <div style={{ textAlign: "center" }}>
-          <div
-            style={{ display: "flex", width: "100%", justifyContent: "center" }}
-          >
-            <img
-              src="./BoMen.png"
-              style={{ backgroundColor: "white", paddingRight: "4px" }}
-              width="30px"
-            ></img>
-            <h2 style={{ margin: 0, color: "black" }}>
-              PSA PortSense Dashboard
-            </h2>
-          </div>
-
+          <h2 style={{ margin: 0, color: "black" }}>PSA PortSense Dashboard</h2>
           <span style={{ color: "#666" }}>
             Monitor port performance and get instant insights from your Copilot.
           </span>
@@ -217,7 +282,7 @@ export default function App() {
         <Split
           sizes={[70, 30]} // default split
           minSize={300}
-          gutterSize={5}
+          gutterSize={8}
           cursor="col-resize"
           style={{
             display: "flex",
@@ -258,6 +323,7 @@ export default function App() {
                 display: "flex",
                 flexDirection: "column",
                 width: "100%",
+                maxWidth: "500px",
                 height: "100%",
                 backgroundColor: "#fff",
                 borderRadius: "7px",
@@ -322,28 +388,34 @@ export default function App() {
                         padding: "0.5rem 0.75rem",
                         borderRadius: "12px",
                         maxWidth: "80%",
-                        wordBreak: "break-word",
                         textAlign: "left",
-                        marginBottom: "0.25rem",
+                        marginBottom: 8,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8, // internal spacing between text & chips
+                        boxSizing: "border-box",
                       }}
                     >
-                      {isBot ? <ReactMarkdown>{m.text}</ReactMarkdown> : m.text}
+                      <div
+                        style={{
+                          // keep markdown text constrained to bubble width
+                          overflowWrap: "anywhere",
+                          whiteSpace: "pre-wrap",
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        {isBot ? (
+                          <ReactMarkdown>{m.text}</ReactMarkdown>
+                        ) : (
+                          m.text
+                        )}
+                      </div>
 
-                      {/* Show suggestion chips only under the last assistant message */}
                       {isBot && isLast && suggestions?.length > 0 && (
-                        <div style={{ marginTop: "8px" }}>
-                          <Space wrap>
-                            {suggestions.map((s, i) => (
-                              <Button
-                                key={i}
-                                size="small"
-                                onClick={() => askLLM(s)}
-                              >
-                                {s}
-                              </Button>
-                            ))}
-                          </Space>
-                        </div>
+                        <SuggestionChips
+                          items={suggestions}
+                          onClick={(s) => askLLM(s)}
+                        />
                       )}
                     </div>
                   );
