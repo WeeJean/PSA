@@ -31,7 +31,12 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+
+CORS(app, resources={
+    r"/*": {
+        "origins": ["https://portsense-tau.vercel.app", "https://127.0.0.1:8000"]
+    }
+})
 # === Azure API Configuration (used inside LangChain) ===
 AZURE_API_KEY = os.getenv("AZURE_OPENAI_KEY")
 AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://psacodesprint2025.azure-api.net")
