@@ -1,4 +1,3 @@
-# agent_engine_v2.py
 import os, re
 import json as _json
 from dotenv import load_dotenv
@@ -13,11 +12,16 @@ from insight_engine import (
     get_basic_info,
     kpi_snapshot,
     summarize_metric,
-    apply_filters,   # used in anomalies tool
-    _df,             # raw df for some tools
+    apply_filters,  # used in anomalies tool
+    _df,            # raw df for some tools
     BU_TO_REGION,
     get_llm,
     _col
+)
+
+# ======= bring explainer and forcasting tools (FIXED IMPORT PATH) =======
+from search_engine import (
+    _call_gemini_with_search
 )
 
 load_dotenv()
@@ -47,8 +51,6 @@ def kpi_tool(filters_json: str = "") -> str:
     Calculates and returns a full, executive-level KPI snapshot for the dataset.
     The final output MUST be in list form, with labels in bold.
     This includes Volume, Efficiency, and Impact metrics, **AND** the Top 3 Port Unit (BU) and Top 3 Vessel performance rankings.
-    
-    **CRUCIAL:** For the rankings (BU and Vessel), you **MUST** extract and display the name and the **full calculated Bunker Savings (USD) amount** (e.g., "$123,456.78"). Do not omit any ranking or metric value.
 
     filters_json is an optional JSON string of include filters,
     e.g. {"Region":["APAC"],"BU":["SINGAPORE"]}.
@@ -246,7 +248,87 @@ def peek_tool(column: str, n: int = 8) -> str:
         "samples": s.astype(str).tolist()
     })
 
-tools = [data_info_tool, kpi_tool, trend_mom_tool, anomalies_tool, distinct_tool, peek_tool, metric_value_tool]
+@tool("delay_explainer", return_direct=True) # OPTIMIZED: return_direct=True
+def delay_explainer(
+    port_name: str, 
+    start_date: str, 
+    end_date: str, 
+    observed_metric: str, 
+    metric_value: str
+) -> str:
+    """
+    Analyze high wait times or unusual KPI performance for a given port and time period.
+    The tool correlates the internal data anomaly with external, real-world events (e.g., 
+    extreme weather, port congestion, geopolitical disruptions) using current global knowledge.
+    """
+    system_prompt = (
+        "You are a Senior Maritime Operations Analyst. Your task is to correlate a given "
+        "KPI anomaly with external, real-world events. Use Google Search grounding to find "
+        "relevant weather incidents, port congestion reports, labor strikes, or geopolitical changes "
+        "that occurred during the specified time frame and location. "
+        "Provide a **single, highly concise paragraph** explanation in Markdown. Crucially, "
+        "you **MUST** weave all the web sources directly into the paragraph as **inline, full Markdown hyperlinks** "
+        "e.g., '...due to massive port congestion **[as reported by Maritime News](http://example.com/uri)**.' "
+        "Do NOT use a separate 'Sources' section or numbered citations."
+    )
+    
+    user_query = (
+        f"Analyze the period from {start_date} to {end_date} for the port of {port_name}. "
+        f"During this time, the observed metric {observed_metric} peaked at {metric_value}. "
+        "What external factors (e.g., weather, strikes, geopolitical issues) likely caused this delay?"
+    )
+
+    result = _call_gemini_with_search(system_prompt, user_query)
+    
+    # Use _json for consistency when dumping errors, though regular json is also available.
+    if 'error' in result:
+        return _json.dumps(result)
+    
+    # Format the final output with sources for the LLM agent to return
+    explanation = result['explanation']
+    
+    return explanation
+
+@tool("kpi_forecaster", return_direct=True) # OPTIMIZED: return_direct=True
+def kpi_forecaster(kpi_to_forecast: str, time_frame: str) -> str:
+    """
+    Provides a forward-looking forecast for a key operational KPI based on current 
+    global trends and external forecasts (weather, geopolitics, economic outlook).
+
+    The tool analyzes current and forecast global conditions to determine the likely 
+    direction (Improvement, Worsening, or Stable) for the target KPI.
+    """
+    system_prompt = (
+        "You are a predictive analyst for the global shipping industry. Your task is to provide a "
+        "forward-looking forecast for a maritime KPI based on current global events. "
+        "Use Google Search grounding to find information on long-range weather forecasts (e.g., El Niño), "
+        "geopolitical risks (e.g., Red Sea tensions, key labor negotiations), and major port capacity changes. "
+        "Your output of 3 paragraphs MUST contain: 1. A final verdict (Improvement, Worsening, or Stable), 2. A detailed "
+        "breakdown of external factors, and 3. A concluding summary."
+        "Use strong Markdown formatting. Crucially, "
+        "you **MUST** weave all the web sources directly into the paragraph as **inline, full Markdown hyperlinks** "
+        "e.g., '...due to massive port congestion **[as reported by Maritime News](http://example.com/uri)**.' "
+        "Do NOT use a separate 'Sources' section or numbered citations."
+    )
+    
+    user_query = (
+        f"Provide a forecast for the '{kpi_to_forecast}' KPI over the '{time_frame}' time frame. "
+        "Analyze how current or forecasted global weather patterns, geopolitical changes, and port conditions "
+        "will influence the performance of this KPI."
+    )
+
+    result = _call_gemini_with_search(system_prompt, user_query)
+    
+    if 'error' in result:
+        return _json.dumps(result)
+
+    # Format the final output with sources for the LLM agent to return
+    explanation = result['explanation']
+    
+    return explanation
+
+
+tools = [data_info_tool, kpi_tool, trend_mom_tool, anomalies_tool, distinct_tool, peek_tool, metric_value_tool, delay_explainer, kpi_forecaster]
 
 # --- LLM (same as before) ---
 llm = AzureChatOpenAI(
@@ -264,9 +346,11 @@ prompt = ChatPromptTemplate.from_messages([
     "- kpi_snapshot for KPI aggregates within optional filters\n"
     "- trend_mom for month-over-month trends on a metric\n"
     "- anomalies_by_group to surface outliers by BU/Region\n"
-    "- metric_value to return a single metric value for a BU/Region and month (YYYY-MM or month name)\n"  # ← ADD THIS LINE
+    "- metric_value to return a single metric value for a BU/Region and month (YYYY-MM or month name)\n" 
     "- data_info/distinct_values/peek_column for schema exploration.\n"
-    "Be concise and explain in business terms.\n"
+    "- delay_explainer to find external causes (weather, geopolitical) for KPI anomalies.\n"
+    "- kpi_forecaster to predict future KPI changes based on current global events.\n"
+    "Be concise and explain in business terms. **If you calculate a negative trend or detect an anomaly and the user's query asks for reasons, causes, or drivers, immediately proceed to use the 'delay_explainer' tool with the context you have, without asking for confirmation.**\n"
     "If the user names a site (Antwerp, Singapore, Busan), interpret it as BU (column 'BU').\n"
     "If the user says 'in APAC', 'in EMEA', or 'in ME', interpret that as a Region filter (column 'Region').\n"
     "Metrics must match canonical names: 'ArrivalAccuracy(FinalBTR)', 'BerthTime(hours):ATU-ATB', "
@@ -329,7 +413,7 @@ def suggest_next_queries(
     # Map actual -> canonical label shown to the LLM. You can customize pretty labels here.
     # Try to keep these 1:1 with your engine’s canonical keys.
     candidates = {
-        "BunkerSaved(USD)":          _col("BunkerSaved(USD)")          or "BunkerSaved(USD)",
+        "BunkerSaved(USD)":      _col("BunkerSaved(USD)")            or "BunkerSaved(USD)",
         "CarbonAbatement(Tonnes)":   _col("CarbonAbatement(Tonnes)")   or "CarbonAbatement(Tonnes)",
         "BerthTime(hours):ATU-ATB":  _col("BerthTime(hours):ATU-ATB")  or "BerthTime(hours):ATU-ATB",
         "AssuredPortTimeAchieved(%)":_col("AssuredPortTimeAchieved(%)")or "AssuredPortTimeAchieved(%)",
@@ -367,7 +451,7 @@ def suggest_next_queries(
     Return ONLY a JSON array of {limit+3} short strings (no prose, no markdown, no keys).
 
     ### Rules
-    - Start with an action verb (Show, Summarize, Rank, Compare, Investigate, List, Recommend).
+    - Start with an action verb (Show, Summarize, Rank, Compare, Investigate, List, Recommend, Forecast, Explain).
     - Keep them short (4–12 words, no trailing periods).
     - Use ONLY valid scopes and metrics listed below.
     - Use a variety of metrics and regions — do not repeat the same metric or region too often.
@@ -375,7 +459,7 @@ def suggest_next_queries(
     - Avoid generic or unanswerable prompts (e.g. “delay causes” or “reasons for low performance”).
     - Avoid always focusing on APAC or Arrival Accuracy.
     - Prefer relevant and diverse KPIs.
-
+    
     ### Valid metrics
     {allowed_metrics}
 
@@ -391,6 +475,8 @@ def suggest_next_queries(
     - Rank best or worst 3 BUs by a metric
     - Compare two regions or ports on a KPI
     - Investigate anomalies or performance drivers for a metric
+    - **Explain** delay in BERTH TIME at SINGAPORE in Sep 2025
+    - **Forecast** BUNKER SAVINGS trend for the next quarter
     - Recommend next 3 actions to improve a metric
 
     ### Context
@@ -415,11 +501,11 @@ def suggest_next_queries(
     except Exception:
         items = []
 
-    verb = re.compile(r"^(Show|Summarize|Compare|Rank|Investigate|List|Peek|Recommend)\b", re.I)
+    verb = re.compile(r"^(Show|Summarize|Compare|Rank|Investigate|List|Peek|Recommend|Forecast|Explain)\b", re.I)
     intent = re.compile(
         r"(KPI|snapshot|trend|month|MoM|rank|best|worst|top|bottom|"
         r"anomal|outlier|compare|vs|drivers?|drill|distinct|unique|values?|list|"
-        r"peek|sample|column|actions?|steps?|improve)",
+        r"peek|sample|column|actions?|steps?|improve|forecast|predict|explain|cause|delay)",
         re.I,
     )
 
@@ -476,14 +562,16 @@ def suggest_next_queries(
         if "distinct" in tl or "unique" in tl or "values" in tl or "list " in tl: return "distinct"
         if "peek" in tl or "sample" in tl or "column" in tl: return "peek"
         if "action" in tl or "steps" in tl or "improve" in tl or "recommend" in tl: return "actions"
+        if "forecast" in tl or "predict" in tl: return "forecast"
+        if "explain" in tl or "cause" in tl or "delay" in tl: return "explain"
         return "other"
 
-    buckets = {k: [] for k in ["kpi","trend","best","worst","anom","compare","drivers","distinct","peek","actions","other"]}
+    buckets = {k: [] for k in ["kpi","trend","compare","best","worst","anom","drivers","distinct","peek","actions","forecast","explain","other"]}
     for t in curated:
         buckets[bucket_key(t)].append(t)
 
     # Interleave buckets to avoid clustering on one intent
-    order = ["kpi","trend","compare","best","worst","anom","drivers","distinct","peek","actions","other"]
+    order = ["kpi","trend","compare","best","worst","anom","drivers","forecast","explain","distinct","peek","actions","other"]
     out = []
     i = 0
     while len(out) < limit and any(buckets.values()):

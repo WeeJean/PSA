@@ -463,6 +463,8 @@ def summarize_metric(metric: str, filters: Optional[Dict] = None, level: str = "
             "filters_applied": filters or {},
         }
 
+
+
 # ========= Optional: quick CLI self-test =========
 if __name__ == "__main__":
     print("→ Data info:", get_basic_info())
