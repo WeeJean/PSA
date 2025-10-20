@@ -13,8 +13,8 @@ export default function App() {
   const lastMessageRef = useRef(null);
   const [messages, setMessages] = useState([]); // [{ role: 'user'|'assistant', text: string, suggestions?: string[] }]
   const hasRun = useRef(false);
-  const API_BASE = "http://127.0.0.1:8000";
-
+  const API_BASE = import.meta.env.VITE_BACKEND_BASE_URL;
+  console.log(API_BASE);
   const DEFAULT_CHIPS = [
     "Summarize KPI snapshot for APAC",
     "Show WoW trend for ArrivalAccuracy(FinalBTR) in APAC",

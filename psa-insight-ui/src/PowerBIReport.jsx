@@ -4,6 +4,7 @@ import * as pbi from "powerbi-client";
 export default function PowerBIReport() {
   const reportRef = useRef(null);
   const [embedConfig, setEmbedConfig] = useState(null);
+  const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_BASE_URL;
 
   // Create a Power BI service instance once
   const powerbiServiceRef = useRef(
@@ -17,7 +18,7 @@ export default function PowerBIReport() {
   useEffect(() => {
     async function loadReport() {
       try {
-        const res = await fetch("http://127.0.0.1:8000/get-embed-token");
+        const res = await fetch(`${BACKEND_BASE_URL}/get-embed-token`);
         const data = await res.json();
         setEmbedConfig(data);
       } catch (err) {
