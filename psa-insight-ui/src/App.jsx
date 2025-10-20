@@ -61,7 +61,7 @@ export default function App() {
         "improve",
         "recommend",
         "predict",
-        "explain"
+        "explain",
       ].join("|"),
       "i"
     );
@@ -415,7 +415,7 @@ export default function App() {
                   backgroundColor: "#fafafa",
                 }}
               >
-                <img src="./public/BoMen.png" width="30px"></img>
+                <img src="./BoMen.png" width="30px"></img>
                 ‎ ‎ AskBoman
                 <div
                   style={{
