@@ -336,8 +336,37 @@ def kpi_snapshot(filters: Optional[Dict] = None) -> Dict[str, Optional[float]]:
         if vals.empty:
             return None
         return round(float(vals.sum()), 3)
+    
+    def _aggregate_top_n(
+        group_col_canon: str, 
+        metric_col_canon: str, 
+        top_n: int = 3
+    ) -> List[Dict[str, float]]:
+        
+        gcol = _col(group_col_canon) # e.g., 'BU' or 'Vessel'
+        mcol = _col(metric_col_canon) # e.g., 'Carbon Abatement (Tonnes)'
+        
+        if not gcol or not mcol or gcol not in d.columns or mcol not in d.columns:
+            return []
+        
+        # 1. Prepare metric column (using existing cleaning method)
+        d_temp = d[[gcol, mcol]].copy()
+        d_temp['metric_val'] = pd.to_numeric(d_temp[mcol], errors='coerce').fillna(0)
+        
+        # 2. Group by group_col and sum the metric
+        agg = d_temp.groupby(gcol)['metric_val'].sum().reset_index()
+        
+        # 3. Sort (descending) and select top N
+        top = agg.nlargest(top_n, 'metric_val')
+        
+        # 4. Rename columns for clear output and return
+        return top.rename(
+            columns={gcol: group_col_canon, 'metric_val': metric_col_canon}
+        ).to_dict(orient='records')
 
+    # 1. Base Metrics
     out = {
+        "total_rotations": len(d), 
         "arrival_accuracy_avg_pct": _mean("ArrivalAccuracy(FinalBTR)", pct=True),
         "berth_time_avg_hours": _mean("BerthTime(hours):ATU-ATB"),
         "assured_port_time_pct": _mean("AssuredPortTimeAchieved(%)"),
@@ -345,6 +374,22 @@ def kpi_snapshot(filters: Optional[Dict] = None) -> Dict[str, Optional[float]]:
         "bunker_saved_usd": _sum("BunkerSaved(USD)"),
         "filters_applied": filters or {},
     }
+
+    # 2. Corrected Top Performer Metrics
+    
+    # Top 3 Port Units (BU) by Bunker Savings
+    out["top_bu_by_bunker_savings"] = _aggregate_top_n(
+        group_col_canon="BU", 
+        metric_col_canon="BunkerSaved(USD)", # Changed to canonical name (no space)
+        top_n=3
+    )
+    
+    # Top 3 Vessels by Bunker Savings
+    out["top_vessel_by_bunker_savings"] = _aggregate_top_n( # Key name changed
+        group_col_canon="Vessel", 
+        metric_col_canon="BunkerSaved(USD)", # Metric changed from CarbonAbatement to BunkerSaved(USD)
+        top_n=3
+    )
     return out
 
 # =========== Month-over-Month summarizer ===========

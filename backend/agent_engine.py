@@ -44,10 +44,16 @@ def data_info_tool() -> dict:
 @tool("kpi_snapshot", return_direct=False)
 def kpi_tool(filters_json: str = "") -> str:
     """
-    Compute KPI snapshot (month-agnostic aggregates) for the current dataset and optional filters.
-    filters_json: JSON string of include filters, e.g. {"Region":["APAC"],"BU":["SINGAPORE"]}
-    Returns JSON string with KPI fields.
+    Calculates and returns a full, executive-level KPI snapshot for the dataset.
+    The final output MUST be in list form, with labels in bold.
+    This includes Volume, Efficiency, and Impact metrics, **AND** the Top 3 Port Unit (BU) and Top 3 Vessel performance rankings.
+    
+    **CRUCIAL:** For the rankings (BU and Vessel), you **MUST** extract and display the name and the **full calculated Bunker Savings (USD) amount** (e.g., "$123,456.78"). Do not omit any ranking or metric value.
+
+    filters_json is an optional JSON string of include filters,
+    e.g. {"Region":["APAC"],"BU":["SINGAPORE"]}.
     """
+
     f = _norm_filters(filters_json)
     return _json.dumps(kpi_snapshot(f), default=str)
 
