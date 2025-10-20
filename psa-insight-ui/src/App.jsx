@@ -26,7 +26,7 @@ export default function App() {
     if (!Array.isArray(items)) return [];
 
     const verb =
-      /^(Show|Summarize|Compare|Rank|Investigate|List|Peek|Recommend)\b/i;
+      /^(Show|Summarize|Compare|Rank|Investigate|List|Peek|Recommend|Forecast|Explain)\b/i;
     const intent = new RegExp(
       [
         "KPI",
@@ -60,6 +60,8 @@ export default function App() {
         "steps",
         "improve",
         "recommend",
+        "predict",
+        "explain"
       ].join("|"),
       "i"
     );

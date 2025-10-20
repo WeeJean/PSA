@@ -303,7 +303,7 @@ def kpi_forecaster(kpi_to_forecast: str, time_frame: str) -> str:
         "You are a predictive analyst for the global shipping industry. Your task is to provide a "
         "forward-looking forecast for a maritime KPI based on current global events. "
         "Use Google Search grounding to find information on long-range weather forecasts (e.g., El Niño), "
-        "geopolitical risks (e.g., Red Sea tensions, key labor negotiations), and major port capacity changes. "
+        "geopolitical risks (e.g., tensions, key labor negotiations), and major port capacity changes. "
         "Your output of 3 paragraphs MUST contain: 1. A final verdict (Improvement, Worsening, or Stable), 2. A detailed "
         "breakdown of external factors, and 3. A concluding summary."
         "Use strong Markdown formatting. Crucially, "
@@ -357,6 +357,7 @@ prompt = ChatPromptTemplate.from_messages([
     "If the user says 'in APAC', 'in EMEA', or 'in ME', interpret that as a Region filter (column 'Region').\n"
     "Metrics must match canonical names: 'ArrivalAccuracy(FinalBTR)', 'BerthTime(hours):ATU-ATB', "
     "'AssuredPortTimeAchieved(%)', 'CarbonAbatement(Tonnes)', 'BunkerSaved(USD)'.\n"
+    "Do not ask the user questions.\n"
     ),
     MessagesPlaceholder(variable_name="chat_history", optional=True),
     ("human", "{input}"),

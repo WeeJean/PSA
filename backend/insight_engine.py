@@ -384,7 +384,7 @@ def kpi_snapshot(filters: Optional[Dict] = None) -> Dict[str, Optional[float]]:
         top_n=3
     )
     
-    # Top 3 Vessels by Bunker Savings
+    # Top 3 Vessels by Carbon Abatement
     out["top_vessel_by_bunker_savings"] = _aggregate_top_n( # Key name changed
         group_col_canon="Vessel", 
         metric_col_canon="BunkerSaved(USD)", # Metric changed from CarbonAbatement to BunkerSaved(USD)
