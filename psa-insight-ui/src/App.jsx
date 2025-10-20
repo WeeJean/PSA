@@ -476,7 +476,33 @@ export default function App() {
                         }}
                       >
                         {isBot ? (
-                          <ReactMarkdown>{m.text}</ReactMarkdown>
+                          <ReactMarkdown
+                            components={{
+                              ul: ({ node, ...props }) => (
+                                <ul
+                                  style={{ margin: 0, paddingLeft: "1.2em" }}
+                                  {...props}
+                                />
+                              ),
+                              ol: ({ node, ...props }) => (
+                                <ol
+                                  style={{ margin: 0, paddingLeft: "1.2em" }}
+                                  {...props}
+                                />
+                              ),
+                              li: ({ node, ...props }) => (
+                                <li
+                                  style={{ marginBottom: 0, lineHeight: 1.4 }}
+                                  {...props}
+                                />
+                              ),
+                              p: ({ node, ...props }) => (
+                                <p style={{ marginBottom: 0 }} {...props} />
+                              ),
+                            }}
+                          >
+                            {m.text}
+                          </ReactMarkdown>
                         ) : (
                           m.text
                         )}
