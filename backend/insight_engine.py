@@ -96,6 +96,7 @@ DEPLOYMENT = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT")
 AZURE_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 RAW_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 
+
 _LLM = None
 def get_llm():
     global _LLM
