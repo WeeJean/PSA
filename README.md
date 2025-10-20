@@ -44,9 +44,3 @@ The backend component requires a Python environment to run.
 | **1** | `pip install -r requirements.txt` | Install all necessary Python libraries.                                                  |
 | **2** | `mv .env.example .env`            | Create the essential environment configuration file (Replace with appropriate API keys)  |
 | **3** | `python3 app.py`                  | Run the Python application server. The API will be available at `http://127.0.0.1:8000`. |
-
-## 🛠️ Built With
-
-- **Frontend:** React
-
-- **Backend:** Python, Flask, and Pandas
