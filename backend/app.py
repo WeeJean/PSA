@@ -11,7 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from agent_engine import run_agentic_query, suggest_next_queries
-
+from powerBi import main
 
 # Local modules
 from insight_engine import (
@@ -31,8 +31,7 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 TENANT_ID = os.getenv("TENANT_ID")
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:5174", "http://localhost:5174"]}}, supports_credentials=True)
-
+CORS(app, resources={r"/*": {"origins": "*"}})
 # === Azure API Configuration (used inside LangChain) ===
 AZURE_API_KEY = os.getenv("AZURE_OPENAI_KEY")
 AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://psacodesprint2025.azure-api.net")
@@ -229,7 +228,9 @@ def data_info():
 
 @app.post("/ask")
 def ask_unified():
+    main()
     data = request.get_json(silent=True) or {}
+    
     question = (data.get("question") or data.get("query") or "").strip()
     if not question:
         return jsonify({"error": "Missing 'question'"}), 400
