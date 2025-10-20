@@ -463,7 +463,92 @@ def summarize_metric(metric: str, filters: Optional[Dict] = None, level: str = "
             "filters_applied": filters or {},
         }
 
+# =========== Weather Forecast & History Tool (OpenWeatherMap) ===========
+import requests
+from datetime import datetime, timedelta
+from langchain_core.tools import tool
 
+# Coordinates for PSA ports
+PORT_COORDS = {
+    "Tuas": (1.264, 103.679),
+    "Pasir Panjang": (1.26, 103.76),
+    "Tanjong Pagar": (1.265, 103.842),
+    "Brani": (1.26, 103.84),
+    "Singapore": (1.29, 103.85)
+}
+
+@tool("weather_forecast", return_direct=True)
+def weather_forecast_tool(location: str = "Singapore", when: str = "current") -> str:
+    """
+    Retrieves current, historical, or forecasted weather for a specified PSA port area.
+    - location: 'Tuas', 'Pasir Panjang', 'Tanjong Pagar', etc.
+    - when: 'current', 'yesterday', 'past week', 'tomorrow', 'next few days'
+    """
+    key = os.getenv("OPENWEATHER_API_KEY")
+    if not key:
+        return "Error: Missing OPENWEATHER_API_KEY in .env."
+
+    loc_clean = location.strip().title()
+    lat, lon = PORT_COORDS.get(loc_clean, PORT_COORDS["Singapore"])
+
+    try:
+        base_url = "https://api.openweathermap.org/data/2.5"
+        result_text = ""
+
+        # --- CURRENT WEATHER ---
+        if "current" in when.lower():
+            url = f"{base_url}/weather?lat={lat}&lon={lon}&appid={key}&units=metric"
+            r = requests.get(url, timeout=10)
+            data = r.json()
+            desc = data["weather"][0]["description"].capitalize()
+            temp = data["main"]["temp"]
+            humidity = data["main"]["humidity"]
+            wind = data["wind"]["speed"]
+            result_text = f"**Weather in {loc_clean} (now)**: {desc}, {temp}°C, humidity {humidity}%, wind {wind} m/s."
+
+        # --- FORECAST (next few days) ---
+        elif "next" in when.lower() or "tomorrow" in when.lower() or "forecast" in when.lower():
+            url = f"{base_url}/forecast?lat={lat}&lon={lon}&appid={key}&units=metric"
+            r = requests.get(url, timeout=10)
+            data = r.json()
+            forecasts = []
+            for item in data["list"][:8]:  # next 24 h (3 h × 8)
+                dt = datetime.utcfromtimestamp(item["dt"]).strftime("%d %b %H:%M")
+                desc = item["weather"][0]["description"]
+                temp = item["main"]["temp"]
+                forecasts.append(f"{dt}: {desc}, {temp}°C")
+            result_text = f"**Forecast for {loc_clean} (next 24 h)**:\n" + "\n".join(forecasts)
+
+        # --- HISTORICAL (yesterday / past few days) ---
+        elif "yesterday" in when.lower() or "past" in when.lower() or "last" in when.lower():
+            end_time = int(datetime.utcnow().timestamp())
+            # Look back ~1 day (yesterday) or 5 days (past week)
+            days_back = 1 if "yesterday" in when.lower() else 5
+            start_time = end_time - (86400 * days_back)
+            url = f"{base_url}/onecall/timemachine?lat={lat}&lon={lon}&dt={start_time}&appid={key}&units=metric"
+            r = requests.get(url, timeout=10)
+            data = r.json()
+            if "current" in data:
+                c = data["current"]
+                desc = c["weather"][0]["description"].capitalize()
+                temp = c["temp"]
+                humidity = c["humidity"]
+                wind = c["wind_speed"]
+                day_label = "yesterday" if days_back == 1 else f"past {days_back} days"
+                result_text = (
+                    f"**Weather in {loc_clean} ({day_label})**: "
+                    f"{desc}, {temp}°C, humidity {humidity}%, wind {wind} m/s."
+                )
+            else:
+                result_text = f"No historical data found for {loc_clean}."
+
+        else:
+            result_text = "Unknown timeframe. Please specify 'current', 'yesterday', 'past week', or 'next few days'."
+
+        return result_text
+
+    except Exception as e:
+        return f"Error retrieving weather: {e}"
 
 # ========= Optional: quick CLI self-test =========
 if __name__ == "__main__":

@@ -16,7 +16,8 @@ from insight_engine import (
     _df,            # raw df for some tools
     BU_TO_REGION,
     get_llm,
-    _col
+    _col,
+   weather_forecast_tool
 )
 
 # ======= bring explainer and forcasting tools (FIXED IMPORT PATH) =======
@@ -328,7 +329,7 @@ def kpi_forecaster(kpi_to_forecast: str, time_frame: str) -> str:
     return explanation
 
 
-tools = [data_info_tool, kpi_tool, trend_mom_tool, anomalies_tool, distinct_tool, peek_tool, metric_value_tool, delay_explainer, kpi_forecaster]
+tools = [data_info_tool, kpi_tool, trend_mom_tool, anomalies_tool, distinct_tool, peek_tool, metric_value_tool, delay_explainer, kpi_forecaster, weather_forecast_tool,  ]
 
 # --- LLM (same as before) ---
 llm = AzureChatOpenAI(
@@ -350,6 +351,7 @@ prompt = ChatPromptTemplate.from_messages([
     "- data_info/distinct_values/peek_column for schema exploration.\n"
     "- delay_explainer to find external causes (weather, geopolitical) for KPI anomalies.\n"
     "- kpi_forecaster to predict future KPI changes based on current global events.\n"
+    "- weather_forecast to retrieve live, past, or forecasted weather for port areas like Tuas, Pasir Panjang, or Tanjong Pagar.\n"
     "Be concise and explain in business terms. **If you calculate a negative trend or detect an anomaly and the user's query asks for reasons, causes, or drivers, immediately proceed to use the 'delay_explainer' tool with the context you have, without asking for confirmation.**\n"
     "If the user names a site (Antwerp, Singapore, Busan), interpret it as BU (column 'BU').\n"
     "If the user says 'in APAC', 'in EMEA', or 'in ME', interpret that as a Region filter (column 'Region').\n"
