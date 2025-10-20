@@ -43,7 +43,13 @@ def _norm_filters(filters_json: str | None):
 
 @tool("data_info", return_direct=False)
 def data_info_tool() -> dict:
-    """Basic info about current dataset."""
+    """
+    Basic info about current dataset.
+    USE WHEN:
+    - User asks what data is loaded, columns available, date coverage, or last refresh.
+    - Before suggesting filters (use with distinct_values).
+    NOT FOR: computing KPIs, trends, or rankings.
+    """
     return get_basic_info()
 
 @tool("kpi_snapshot", return_direct=False)
@@ -51,10 +57,15 @@ def kpi_tool(filters_json: str = "") -> str:
     """
     Calculates and returns a full, executive-level KPI snapshot for the dataset.
     The final output MUST be in list form, with labels in bold.
-    This includes Volume, Efficiency, and Impact metrics, **AND** the Top 3 Port Unit (BU) and Top 3 Vessel performance rankings.
+    This includes Volume, Efficiency, and Impact metrics, AND the Top 3 Port Unit (BU) and Top 3 Vessel performance rankings.
+    
+    USE WHEN:
+    - User asks for "KPI snapshot", "dashboard", "overall performance", optionally scoped by Region/BU.
 
     filters_json is an optional JSON string of include filters,
     e.g. {"Region":["APAC"],"BU":["SINGAPORE"]}.
+    
+    NOT FOR: ranking groups (use anomalies_by_group) or MoM trend (use trend_mom).
     """
 
     f = _norm_filters(filters_json)
@@ -66,7 +77,15 @@ def trend_mom_tool(metric: str, filters_json: str = "") -> str:
     Compute month-over-month trend for a metric within optional filters.
     metric: use canonical metric names (e.g., "ArrivalAccuracy(FinalBTR)", "BunkerSaved(USD)")
     filters_json: JSON string filters, e.g. {"BU":["SINGAPORE"]}.
+    
+    USE WHEN:
+    - User asks for "MoM trend", "month-over-month", or simply "trend" for a metric.
+    - Optional scope: Region/BU via filters_json.
+
     Returns JSON with latest_month, previous_month, current_mean, previous_mean, delta_percent/pp.
+
+    NOT FOR: ranking "top/worst N" groups → use anomalies_by_group.
+    Notes: Aggregation level is month; do not assume other windows unless user specifies.
     """
     f = _norm_filters(filters_json)
     # summarize_metric in v2 defaults to month; pass level="month" to be explicit
@@ -76,7 +95,16 @@ def trend_mom_tool(metric: str, filters_json: str = "") -> str:
 def anomalies_tool(metric: str, group_col: str = "BU", filters_json: str = "", top_n: int = 3) -> str:
     """
     Find highest/lowest groups by z-score on a metric (mean per group), using current dataset.
+
+    USE WHEN:
+    - User asks to "rank/list/show top or worst N" regions/BUs/ports by a metric.
+    - Phrases like "top performers", "best/worst by region/BU", "compare groups".
+
     Resolves canonical names via engine header map.
+
+    NOTES:
+    - Cross-sectional aggregation over filtered data; do NOT assume a month unless user specifies.
+    - If user wants sums (not means), consider extending aggregation or combine with metric_value per group.
     """
     import pandas as pd
     f = _norm_filters(filters_json)
@@ -128,6 +156,14 @@ def metric_value_tool(
     Return a single metric value for an optional month and filters.
     - month accepts "YYYY-MM", "Sep 2025", "September", or "Sep" (chooses most recent if year omitted)
     - agg: "sum" or "mean"; "auto" = sum for Bunker/Carbon, mean for others (ArrivalAccuracy% handled)
+
+    USE WHEN:
+    - User asks "what is the value of X?" (optionally "in Sep 2025", "in Singapore", etc.).
+    - They want one number, not a list.
+    
+    NOTES:
+    - Requires MonthKey to compute month-scoped results.
+    - Error payloads include resolved metric/filters to help the agent retry.
     """
     import calendar
     import pandas as pd
@@ -261,6 +297,13 @@ def delay_explainer(
     Analyze high wait times or unusual KPI performance for a given port and time period.
     The tool correlates the internal data anomaly with external, real-world events (e.g., 
     extreme weather, port congestion, geopolitical disruptions) using current global knowledge.
+
+    USE WHEN:
+    - User asks for "reasons/drivers/why" around a KPI anomaly for a specific port/time window.
+    - After detecting an anomaly via trend_mom or anomalies_by_group and the user wants causes.
+
+    NOTES:
+    - External search + synthesis; output is prose, not JSON.
     """
     system_prompt = (
         "You are a Senior Maritime Operations Analyst. Your task is to correlate a given "
@@ -298,6 +341,14 @@ def kpi_forecaster(kpi_to_forecast: str, time_frame: str) -> str:
 
     The tool analyzes current and forecast global conditions to determine the likely 
     direction (Improvement, Worsening, or Stable) for the target KPI.
+
+    USE WHEN:
+    - User asks to forecast/predict/outlook for a KPI (e.g., next quarter, next 6 months).
+    - They want directional guidance: Improvement / Worsening / Stable with rationale.
+    
+    NOTES:
+    - Inline links only; no separate sources list.
+    - Qualitative by design; numeric projections require a dedicated numeric model.
     """
     system_prompt = (
         "You are a predictive analyst for the global shipping industry. Your task is to provide a "
